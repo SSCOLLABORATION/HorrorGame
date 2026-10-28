@@ -6,6 +6,8 @@ TagManager:
   tags:
   - Obstacle_Vault
   - Obstacle_Slide
+  - WallRunObstacle
+  - Finish
   layers:
   - Default
   - TransparentFX

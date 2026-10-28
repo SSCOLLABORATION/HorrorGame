@@ -5,7 +5,10 @@ using Vector3D.Core;
 namespace Vector3D.UI
 {
     /// <summary>
-    /// Manages the UI overlay screens (Start Screen and End Game Screen).
+    /// Manages the UI overlay screens:
+    /// - Start Screen (Play, Level Select, Quit)
+    /// - Level Select Screen (Sector 1, Sector 2, Back)
+    /// - End Game Screen (Restart, Next Level, Quit)
     /// Subscribes to GameManager state updates and routes button clicks to GameManager actions.
     /// </summary>
     public class UIManager : MonoBehaviour
@@ -13,35 +16,81 @@ namespace Vector3D.UI
         [Header("Panels")]
         [SerializeField] private GameObject _startScreenPanel;
         [SerializeField] private GameObject _endScreenPanel;
+        [SerializeField] private GameObject _levelSelectPanel;
 
-        [Header("Buttons")]
+        [Header("Main Menu Buttons")]
         [SerializeField] private Button _playButton;
+        [SerializeField] private Button _levelSelectButton;
         [SerializeField] private Button _startQuitButton;
+
+        [Header("Level Select Buttons")]
+        [SerializeField] private Button _level1Button;
+        [SerializeField] private Button _level2Button;
+        [SerializeField] private Button _levelSelectBackButton;
+
+        [Header("End Game Buttons")]
         [SerializeField] private Button _restartButton;
+        [SerializeField] private Button _nextLevelButton;
         [SerializeField] private Button _endQuitButton;
 
         [Header("Status Feedback")]
         [SerializeField] private Text _statusHeaderText;
+        [SerializeField] private Text _statusSubText;
+        [SerializeField] private Text _currentLevelLabel;
 
         private void Awake()
         {
             if (_playButton != null)
             {
+                _playButton.onClick.RemoveAllListeners();
                 _playButton.onClick.AddListener(OnPlayClicked);
+            }
+
+            if (_levelSelectButton != null)
+            {
+                _levelSelectButton.onClick.RemoveAllListeners();
+                _levelSelectButton.onClick.AddListener(OnLevelSelectClicked);
             }
 
             if (_startQuitButton != null)
             {
+                _startQuitButton.onClick.RemoveAllListeners();
                 _startQuitButton.onClick.AddListener(OnQuitClicked);
+            }
+
+            if (_level1Button != null)
+            {
+                _level1Button.onClick.RemoveAllListeners();
+                _level1Button.onClick.AddListener(() => OnLevelChosen(1));
+            }
+
+            if (_level2Button != null)
+            {
+                _level2Button.onClick.RemoveAllListeners();
+                _level2Button.onClick.AddListener(() => OnLevelChosen(2));
+            }
+
+            if (_levelSelectBackButton != null)
+            {
+                _levelSelectBackButton.onClick.RemoveAllListeners();
+                _levelSelectBackButton.onClick.AddListener(OnLevelSelectBackClicked);
             }
 
             if (_restartButton != null)
             {
+                _restartButton.onClick.RemoveAllListeners();
                 _restartButton.onClick.AddListener(OnRestartClicked);
+            }
+
+            if (_nextLevelButton != null)
+            {
+                _nextLevelButton.onClick.RemoveAllListeners();
+                _nextLevelButton.onClick.AddListener(OnNextLevelClicked);
             }
 
             if (_endQuitButton != null)
             {
+                _endQuitButton.onClick.RemoveAllListeners();
                 _endQuitButton.onClick.AddListener(OnQuitClicked);
             }
         }
@@ -52,6 +101,7 @@ namespace Vector3D.UI
             {
                 GameManager.Instance.OnStateChanged += HandleStateChanged;
                 GameManager.Instance.OnGameOver += HandleGameOver;
+                GameManager.Instance.OnLevelChanged += HandleLevelChanged;
                 UpdateUI(GameManager.Instance.CurrentState);
             }
             else
@@ -66,6 +116,7 @@ namespace Vector3D.UI
             {
                 GameManager.Instance.OnStateChanged -= HandleStateChanged;
                 GameManager.Instance.OnGameOver -= HandleGameOver;
+                GameManager.Instance.OnLevelChanged -= HandleLevelChanged;
             }
         }
 
@@ -74,12 +125,73 @@ namespace Vector3D.UI
             UpdateUI(state);
         }
 
+        private void HandleLevelChanged(int levelIndex)
+        {
+            UpdateCurrentLevelLabel(levelIndex);
+        }
+
+        private void UpdateCurrentLevelLabel(int levelIndex)
+        {
+            if (_currentLevelLabel != null)
+            {
+                _currentLevelLabel.text = $"ACTIVE SECTOR: 0{levelIndex}";
+            }
+        }
+
         private void HandleGameOver(bool won)
         {
-            if (_statusHeaderText != null)
+            int currentLevel = GameManager.Instance != null ? GameManager.Instance.CurrentLevelIndex : 1;
+
+            if (won)
             {
-                _statusHeaderText.text = won ? "TRACK ESCAPED" : "CAUGHT BY HUNTER";
-                _statusHeaderText.color = won ? new Color(0.2f, 0.9f, 0.3f, 1f) : new Color(1f, 0.25f, 0.25f, 1f);
+                if (currentLevel == 1)
+                {
+                    if (_statusHeaderText != null)
+                    {
+                        _statusHeaderText.text = "LEVEL 1 CLEARED!";
+                        _statusHeaderText.color = new Color(0.2f, 0.9f, 0.3f, 1f);
+                    }
+                    if (_statusSubText != null)
+                    {
+                        _statusSubText.text = "Rooftops conquered. Prepare for Sector 2 wall runs.";
+                    }
+                    if (_nextLevelButton != null)
+                    {
+                        _nextLevelButton.gameObject.SetActive(true);
+                    }
+                }
+                else
+                {
+                    if (_statusHeaderText != null)
+                    {
+                        _statusHeaderText.text = "ALL LEVELS COMPLETED!";
+                        _statusHeaderText.color = new Color(0.1f, 1.0f, 0.5f, 1f);
+                    }
+                    if (_statusSubText != null)
+                    {
+                        _statusSubText.text = "You escaped the enforcer across all rooftop sectors!";
+                    }
+                    if (_nextLevelButton != null)
+                    {
+                        _nextLevelButton.gameObject.SetActive(false);
+                    }
+                }
+            }
+            else
+            {
+                if (_statusHeaderText != null)
+                {
+                    _statusHeaderText.text = "CAUGHT BY HUNTER";
+                    _statusHeaderText.color = new Color(1f, 0.25f, 0.25f, 1f);
+                }
+                if (_statusSubText != null)
+                {
+                    _statusSubText.text = "The enforcer terminated your rooftop run.";
+                }
+                if (_nextLevelButton != null)
+                {
+                    _nextLevelButton.gameObject.SetActive(false);
+                }
             }
         }
 
@@ -90,34 +202,81 @@ namespace Vector3D.UI
                 _startScreenPanel.SetActive(state == GameState.WaitingToStart);
             }
 
+            if (_levelSelectPanel != null)
+            {
+                _levelSelectPanel.SetActive(false);
+            }
+
             if (_endScreenPanel != null)
             {
                 _endScreenPanel.SetActive(state == GameState.GameOver);
+            }
+
+            if (state != GameState.GameOver && _nextLevelButton != null)
+            {
+                _nextLevelButton.gameObject.SetActive(false);
+            }
+
+            if (GameManager.Instance != null)
+            {
+                UpdateCurrentLevelLabel(GameManager.Instance.CurrentLevelIndex);
             }
         }
 
         private void OnPlayClicked()
         {
-            if (GameManager.Instance != null)
+            GameManager.Instance?.StartGame();
+        }
+
+        private void OnLevelSelectClicked()
+        {
+            if (_startScreenPanel != null)
             {
-                GameManager.Instance.StartGame();
+                _startScreenPanel.SetActive(false);
             }
+
+            if (_levelSelectPanel != null)
+            {
+                _levelSelectPanel.SetActive(true);
+            }
+        }
+
+        private void OnLevelSelectBackClicked()
+        {
+            if (_levelSelectPanel != null)
+            {
+                _levelSelectPanel.SetActive(false);
+            }
+
+            if (_startScreenPanel != null)
+            {
+                _startScreenPanel.SetActive(true);
+            }
+        }
+
+        private void OnLevelChosen(int levelIndex)
+        {
+            if (_levelSelectPanel != null)
+            {
+                _levelSelectPanel.SetActive(false);
+            }
+
+            GameManager.Instance?.SelectLevel(levelIndex, startPlaying: true);
         }
 
         private void OnRestartClicked()
         {
-            if (GameManager.Instance != null)
-            {
-                GameManager.Instance.RestartGame();
-            }
+            GameManager.Instance?.RestartGame();
+        }
+
+        private void OnNextLevelClicked()
+        {
+            GameManager.Instance?.StartNextLevel();
         }
 
         private void OnQuitClicked()
         {
-            if (GameManager.Instance != null)
-            {
-                GameManager.Instance.QuitGame();
-            }
+            GameManager.Instance?.QuitGame();
         }
     }
 }

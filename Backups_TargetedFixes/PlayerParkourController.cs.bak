@@ -1,0 +1,1067 @@
+using System;
+using UnityEngine;
+using UnityEngine.InputSystem;
+using Vector3D.Core;
+
+namespace VectorParkour
+{
+    /// <summary>
+    /// Movement states for the forward-runner player controller.
+    /// Exactly one state is active at any time.
+    /// </summary>
+    public enum MovementState
+    {
+        Running,
+        Jumping,
+        Falling,
+        Sliding,
+        WallRunning,
+        Dead
+    }
+
+    /// <summary>
+    /// Authoritative Forward-Runner Player Controller for Unity 6.3 LTS.
+    /// Features:
+    /// - Deterministic automatic forward movement across multi-level tracks.
+    /// - Reliable contextual one-key wall-running with smooth visual tilt and collision-safe alignment.
+    /// - Physics-based jumping with stable grounding, coyote time, and input buffering.
+    /// - Safe sliding with ground-locked feet contact and overhead clearance detection.
+    /// - Clean teleportation API for multi-level spatial transitions (Level 1 at X=0, Level 2 at X=100).
+    /// - Single authoritative movement call (characterController.Move) exactly once per frame.
+    /// </summary>
+    [RequireComponent(typeof(CharacterController))]
+    public class PlayerParkourController : MonoBehaviour
+    {
+        [Header("Forward Movement")]
+        [Tooltip("Constant auto-run speed along the forward axis (m/s).")]
+        [SerializeField] private float baseSpeed = 9.5f;
+
+        [Tooltip("Time to smoothly accelerate from 0 to base speed on start (seconds).")]
+        [SerializeField] private float accelerationTime = 0.4f;
+
+        [Header("Jump Settings")]
+        [Tooltip("Initial upward impulse velocity for jumping (m/s). 9.5 m/s yields ~1.88m peak height.")]
+        [SerializeField] private float jumpForce = 9.5f;
+
+        [Tooltip("Downward gravitational acceleration (m/s^2).")]
+        [SerializeField] private float gravity = -24.0f;
+
+        [Tooltip("Downward terminal velocity clamp (m/s).")]
+        [SerializeField] private float maxFallSpeed = -28.0f;
+
+        [Tooltip("Down input mid-air fast-fall velocity (m/s).")]
+        [SerializeField] private float fastFallSpeed = -20.0f;
+
+        [Tooltip("Grace period (seconds) after leaving a ledge where jumping is still permitted.")]
+        [SerializeField] private float coyoteTime = 0.1f;
+
+        [Tooltip("Window (seconds) to buffer jump input before landing.")]
+        [SerializeField] private float inputBufferWindow = 0.18f;
+
+        [Header("Slide Settings")]
+        [Tooltip("Duration of slide before attempting to stand up (seconds).")]
+        [SerializeField] private float slideDuration = 0.65f;
+
+        [Tooltip("Height of the CharacterController capsule while sliding.")]
+        [SerializeField] private float slidingHeight = 0.85f;
+
+        [Tooltip("Standing height of the CharacterController capsule.")]
+        [SerializeField] private float standingHeight = 1.8f;
+
+        [Header("Wall Run Settings")]
+        [Tooltip("Speed multiplier applied to baseSpeed during wall run (~1.15x).")]
+        [SerializeField] private float wallRunSpeedMultiplier = 1.15f;
+
+        [Tooltip("Probing range for detecting left or right wall-run colliders.")]
+        [SerializeField] private float wallDetectionRange = 2.6f;
+
+        [Tooltip("Visual tilt angle in degrees away from the supporting wall around Z.")]
+        [SerializeField] private float wallTiltAngle = 18f;
+
+        [Tooltip("Speed of visual tilt transition smoothing.")]
+        [SerializeField] private float wallTiltSpeed = 12f;
+
+        [Tooltip("Upward hop force when jumping off or exiting a wall run.")]
+        [SerializeField] private float wallDisengageHopForce = 9.0f;
+
+        [Tooltip("Inward lateral acceleration toward track center upon wall disengage.")]
+        [SerializeField] private float wallDisengageInwardForce = 5.0f;
+
+        [Tooltip("Maximum allowed duration of a single continuous wall run in seconds.")]
+        [SerializeField] private float wallRunMaxDuration = 3.5f;
+
+        [Tooltip("Cooldown period after leaving a wall before another wall run can start.")]
+        [SerializeField] private float wallExitCooldown = 0.35f;
+
+        [Header("Sprint Burst")]
+        [SerializeField] private float sprintMultiplier = 1.4f;
+        [SerializeField] private float sprintDuration = 1.2f;
+        [SerializeField] private float sprintCooldown = 3.0f;
+
+        [Header("Stumble / Collision Settings")]
+        [SerializeField] private float stumbleDuration = 0.45f;
+        [SerializeField] private float stumbleSpeedMultiplier = 0.65f;
+
+        [Header("Level / Goal Settings")]
+        [SerializeField] private float finishZ = 245.0f;
+
+        [Header("Visual & Animation")]
+        [SerializeField] private Transform visualRoot;
+
+        // Components
+        private CharacterController characterController;
+        private Animator animator;
+
+        // State Machine
+        private MovementState currentState = MovementState.Running;
+        public MovementState CurrentState => currentState;
+
+        // Public Query Properties for other systems
+        public bool IsGrounded => characterController != null && characterController.isGrounded;
+        public bool IsJumping => currentState == MovementState.Jumping || currentState == MovementState.Falling;
+        public bool IsSliding => currentState == MovementState.Sliding;
+        public bool IsWallRunning => currentState == MovementState.WallRunning;
+        public bool IsVaulting => false; // Vaulting unified into responsive jump
+        public bool IsSprinting => isSprinting;
+        public bool IsStumbling => isStumbling;
+        public bool HasCompletedLevel => hasCompletedLevel;
+        public float CurrentSpeed => currentSpeed;
+        public float BaseSpeed => baseSpeed;
+        public float SprintCooldownRemaining => Mathf.Max(0f, sprintCooldownTimer);
+        public float TrackCenterX => _trackCenterX;
+
+        // Movement Runtime Variables
+        private float currentSpeed = 0f;
+        private float verticalVelocity = -2.0f;
+        private float runTimer = 0f;
+        private float airborneTimer = 0f;
+        private float _trackCenterX = 0f;
+
+        // Action Timers
+        private float jumpBufferTimer = 0f;
+        private float slideBufferTimer = 0f;
+        private float slideTimer = 0f;
+        private float sprintTimer = 0f;
+        private float sprintCooldownTimer = 0f;
+        private float stumbleTimer = 0f;
+
+        // Wall Run State Variables
+        private int wallSide = 0; // -1 for left wall, +1 for right wall, 0 for none
+        private Collider activeWallCollider;
+        private float wallRunTimer = 0f;
+        private float wallCooldownTimer = 0f;
+        private float targetWallX = 0f;
+        private bool justStartedWallRun = false;
+        private Quaternion defaultVisualLocalRotation = Quaternion.identity;
+
+        // State Flags
+        private bool isSprinting = false;
+        private bool isStumbling = false;
+        private bool hasCompletedLevel = false;
+
+        // Collider Geometry Cache
+        private Vector3 standingCenter;
+        private Vector3 slidingCenter;
+
+        // Stumble Debounce
+        private float lastStumbleZ = -999f;
+        private float lastClearedObstacleZ = -999f;
+
+        // Cached GUI Styles for zero-GC HUD
+        private GUIStyle headerStyle;
+        private GUIStyle statStyle;
+        private GUIStyle sprintStyle;
+        private GUIStyle hintStyle;
+        private GUIStyle stumbleStyle;
+        private GUIStyle winTitleStyle;
+        private GUIStyle subStyle;
+        private bool stylesInitialized = false;
+
+        private void Awake()
+        {
+            Application.runInBackground = true;
+            Application.targetFrameRate = 60;
+            EnsureComponents();
+        }
+
+        private void EnsureComponents()
+        {
+            if (characterController == null)
+            {
+                characterController = GetComponent<CharacterController>();
+            }
+
+            if (characterController != null)
+            {
+                characterController.skinWidth = 0.015f;
+                characterController.minMoveDistance = 0.001f;
+                characterController.stepOffset = 0.3f;
+                characterController.slopeLimit = 45f;
+                standingHeight = characterController.height;
+                standingCenter = characterController.center;
+                float groundY = standingCenter.y - (standingHeight * 0.5f);
+                slidingCenter = new Vector3(standingCenter.x, groundY + (slidingHeight * 0.5f), standingCenter.z);
+            }
+
+            if (visualRoot == null)
+            {
+                Transform foundVisual = transform.Find("Visual");
+                visualRoot = foundVisual != null ? foundVisual : transform;
+            }
+
+            if (visualRoot != null)
+            {
+                defaultVisualLocalRotation = visualRoot.localRotation;
+            }
+
+            if (animator == null)
+            {
+                animator = GetComponentInChildren<Animator>();
+            }
+
+            if (animator != null)
+            {
+                animator.applyRootMotion = false;
+            }
+        }
+
+        private void Start()
+        {
+            EnsureComponents();
+
+            // Ignore collision with Chaser so the hunter never pushes or jostles the player
+            ChaserAI chaser = UnityEngine.Object.FindFirstObjectByType<ChaserAI>();
+            if (chaser != null)
+            {
+                var chaserCC = chaser.GetComponent<CharacterController>();
+                if (chaserCC != null && characterController != null)
+                {
+                    Physics.IgnoreCollision(characterController, chaserCC, true);
+                }
+            }
+
+            _trackCenterX = transform.position.x;
+            currentSpeed = 0f;
+            verticalVelocity = -2.0f;
+            currentState = MovementState.Running;
+        }
+
+        private void Update()
+        {
+            EnsureComponents();
+
+            if (currentState == MovementState.Dead || hasCompletedLevel)
+            {
+                CheckRestartInput();
+                return;
+            }
+
+            if (Time.timeScale <= 0f)
+            {
+                CheckRestartInput();
+                return;
+            }
+
+            // 1. Process Timers & Cooldowns
+            UpdateTimers();
+
+            // 2. Read Player Input
+            ProcessInput();
+
+            // 3. Update Movement State Machine
+            UpdateStateMachine();
+
+            // 4. Calculate & Apply Single Authoritative Motion
+            ApplyAuthoritativeMovement();
+
+            // 5. Update Visual Tilt (Wall Run Presentation)
+            UpdateVisualTilt();
+
+            // 6. Update Animation Parameters
+            UpdateAnimator();
+
+            // 7. Check Win/Fall Conditions
+            CheckBoundsAndGoals();
+
+            justStartedWallRun = false;
+        }
+
+        #region Timers & Input
+
+        private void UpdateTimers()
+        {
+            runTimer += Time.deltaTime;
+
+            if (sprintCooldownTimer > 0f)
+            {
+                sprintCooldownTimer -= Time.deltaTime;
+            }
+
+            if (isSprinting)
+            {
+                sprintTimer -= Time.deltaTime;
+                if (sprintTimer <= 0f)
+                {
+                    isSprinting = false;
+                    sprintCooldownTimer = sprintCooldown;
+                }
+            }
+
+            if (isStumbling)
+            {
+                stumbleTimer -= Time.deltaTime;
+                if (stumbleTimer <= 0f)
+                {
+                    isStumbling = false;
+                }
+            }
+
+            if (wallCooldownTimer > 0f)
+            {
+                wallCooldownTimer -= Time.deltaTime;
+            }
+
+            if (jumpBufferTimer > 0f)
+            {
+                jumpBufferTimer -= Time.deltaTime;
+            }
+
+            if (slideBufferTimer > 0f)
+            {
+                slideBufferTimer -= Time.deltaTime;
+            }
+        }
+
+        private void ProcessInput()
+        {
+            bool jumpDown = false;
+            bool slideDown = false;
+            bool sprintDown = false;
+
+            if (Keyboard.current != null)
+            {
+                jumpDown = Keyboard.current.wKey.wasPressedThisFrame || Keyboard.current.upArrowKey.wasPressedThisFrame;
+                slideDown = Keyboard.current.sKey.wasPressedThisFrame || Keyboard.current.downArrowKey.wasPressedThisFrame;
+                sprintDown = Keyboard.current.dKey.wasPressedThisFrame || Keyboard.current.rightArrowKey.wasPressedThisFrame;
+            }
+            else
+            {
+                try
+                {
+                    jumpDown = Input.GetKeyDown(KeyCode.W) || Input.GetKeyDown(KeyCode.UpArrow);
+                    slideDown = Input.GetKeyDown(KeyCode.S) || Input.GetKeyDown(KeyCode.DownArrow);
+                    sprintDown = Input.GetKeyDown(KeyCode.D) || Input.GetKeyDown(KeyCode.RightArrow);
+                }
+                catch { }
+            }
+
+            // Contextual Jump / Wall-Run Action:
+            if (jumpDown)
+            {
+                if (currentState == MovementState.WallRunning)
+                {
+                    // While already wall-running, a subsequent UpAction disengages the wall run
+                    if (!justStartedWallRun)
+                    {
+                        DisengageWallRun(userInitiated: true);
+                        return;
+                    }
+                }
+                else if (wallCooldownTimer <= 0f && CheckWallRunSurface(out int side, out RaycastHit hit))
+                {
+                    // Contextual wall run entry when beside a valid wall
+                    StartWallRun(side, hit);
+                    return;
+                }
+                else
+                {
+                    // Normal jump buffer
+                    jumpBufferTimer = inputBufferWindow;
+                }
+            }
+
+            // Slide input: buffer or fast-fall
+            if (slideDown)
+            {
+                if (currentState == MovementState.WallRunning)
+                {
+                    DisengageWallRun(userInitiated: true);
+                }
+                else if (currentState == MovementState.Jumping || currentState == MovementState.Falling)
+                {
+                    verticalVelocity = Mathf.Min(verticalVelocity, fastFallSpeed);
+                }
+                else
+                {
+                    slideBufferTimer = inputBufferWindow;
+                }
+            }
+
+            // Sprint input
+            if (sprintDown && !isSprinting && sprintCooldownTimer <= 0f)
+            {
+                isSprinting = true;
+                sprintTimer = sprintDuration;
+            }
+        }
+
+        #endregion
+
+        #region Wall Run Detection & Execution
+
+        private bool IsWallRunObstacle(Collider col)
+        {
+            if (col == null) return false;
+            return col.CompareTag("WallRunObstacle") || col.gameObject.name.Contains("WallRun");
+        }
+
+        /// <summary>
+        /// Reliably probes for a valid WallRunObstacle on left and right sides.
+        /// Filters out player colliders, behind-the-back walls, and invalid normals.
+        /// </summary>
+        public bool CheckWallRunSurface(out int side, out RaycastHit hit)
+        {
+            side = 0;
+            hit = default;
+
+            Vector3 probeOrigin = transform.position + Vector3.up * 1.0f;
+            int mask = ~LayerMask.GetMask("Player");
+
+            // Probe Left (-X)
+            if (Physics.Raycast(probeOrigin, -Vector3.right, out RaycastHit hitLeft, wallDetectionRange, mask))
+            {
+                if (IsWallRunObstacle(hitLeft.collider) && hitLeft.normal.x > 0.4f)
+                {
+                    if (hitLeft.collider.bounds.max.z > transform.position.z + 0.5f)
+                    {
+                        side = -1;
+                        hit = hitLeft;
+                        return true;
+                    }
+                }
+            }
+
+            // Probe Right (+X)
+            if (Physics.Raycast(probeOrigin, Vector3.right, out RaycastHit hitRight, wallDetectionRange, mask))
+            {
+                if (IsWallRunObstacle(hitRight.collider) && hitRight.normal.x < -0.4f)
+                {
+                    if (hitRight.collider.bounds.max.z > transform.position.z + 0.5f)
+                    {
+                        side = 1;
+                        hit = hitRight;
+                        return true;
+                    }
+                }
+            }
+
+            return false;
+        }
+
+        private void StartWallRun(int side, RaycastHit hit)
+        {
+            currentState = MovementState.WallRunning;
+            wallSide = side;
+            activeWallCollider = hit.collider;
+            wallRunTimer = 0f;
+            justStartedWallRun = true;
+            verticalVelocity = 0f;
+            airborneTimer = 0f;
+            jumpBufferTimer = 0f;
+            slideBufferTimer = 0f;
+
+            float faceX = hit.point.x;
+            float safeBuffer = (characterController != null ? characterController.radius : 0.35f) + 0.12f;
+            targetWallX = side == -1 ? (faceX + safeBuffer) : (faceX - safeBuffer);
+        }
+
+        private void DisengageWallRun(bool userInitiated)
+        {
+            currentState = MovementState.Jumping;
+            airborneTimer = 0f;
+            verticalVelocity = wallDisengageHopForce;
+            wallCooldownTimer = wallExitCooldown;
+            wallSide = 0;
+            activeWallCollider = null;
+            justStartedWallRun = false;
+        }
+
+        private void UpdateVisualTilt()
+        {
+            if (visualRoot == null) return;
+
+            if (currentState == MovementState.WallRunning)
+            {
+                // Left wall (wallSide = -1): tilt top right (negative Z rotation)
+                // Right wall (wallSide = +1): tilt top left (positive Z rotation)
+                float targetZAngle = wallSide == -1 ? -wallTiltAngle : wallTiltAngle;
+                Quaternion targetRot = Quaternion.Euler(0f, 0f, targetZAngle);
+                visualRoot.localRotation = Quaternion.Slerp(visualRoot.localRotation, targetRot, wallTiltSpeed * Time.deltaTime);
+            }
+            else
+            {
+                visualRoot.localRotation = Quaternion.Slerp(visualRoot.localRotation, defaultVisualLocalRotation, wallTiltSpeed * Time.deltaTime);
+            }
+        }
+
+        #endregion
+
+        #region Movement State Machine
+
+        private void UpdateStateMachine()
+        {
+            bool grounded = characterController.isGrounded;
+
+            switch (currentState)
+            {
+                case MovementState.Running:
+                    if (!grounded)
+                    {
+                        airborneTimer += Time.deltaTime;
+                        if (airborneTimer > coyoteTime)
+                        {
+                            currentState = MovementState.Falling;
+                        }
+                    }
+                    else
+                    {
+                        airborneTimer = 0f;
+                        verticalVelocity = -2.0f; // Firm grounding stick
+                    }
+
+                    // Check for buffered Jump
+                    if (jumpBufferTimer > 0f && (grounded || airborneTimer <= coyoteTime))
+                    {
+                        ExecuteJump();
+                        return;
+                    }
+
+                    // Check for buffered Slide
+                    if (slideBufferTimer > 0f && grounded)
+                    {
+                        ExecuteSlide();
+                        return;
+                    }
+                    break;
+
+                case MovementState.Jumping:
+                    airborneTimer += Time.deltaTime;
+                    verticalVelocity += gravity * Time.deltaTime;
+                    verticalVelocity = Mathf.Max(verticalVelocity, maxFallSpeed);
+
+                    // Check for mid-air wall latch
+                    if (wallCooldownTimer <= 0f && CheckWallRunSurface(out int jumpSide, out RaycastHit jumpHit))
+                    {
+                        StartWallRun(jumpSide, jumpHit);
+                        return;
+                    }
+
+                    if (verticalVelocity < 0f && grounded && airborneTimer > 0.1f)
+                    {
+                        Land();
+                    }
+                    break;
+
+                case MovementState.Falling:
+                    airborneTimer += Time.deltaTime;
+                    verticalVelocity += gravity * Time.deltaTime;
+                    verticalVelocity = Mathf.Max(verticalVelocity, maxFallSpeed);
+
+                    // Check for mid-air wall latch
+                    if (wallCooldownTimer <= 0f && CheckWallRunSurface(out int fallSide, out RaycastHit fallHit))
+                    {
+                        StartWallRun(fallSide, fallHit);
+                        return;
+                    }
+
+                    // Coyote jump check
+                    if (jumpBufferTimer > 0f && airborneTimer <= coyoteTime)
+                    {
+                        ExecuteJump();
+                        return;
+                    }
+
+                    if (grounded && airborneTimer > 0.05f)
+                    {
+                        Land();
+                    }
+                    break;
+
+                case MovementState.WallRunning:
+                    wallRunTimer += Time.deltaTime;
+                    verticalVelocity = 0f; // Neutral vertical movement while wall running
+
+                    // Verify wall support remains under player
+                    Vector3 probeDir = wallSide == -1 ? -Vector3.right : Vector3.right;
+                    Vector3 origin = transform.position + Vector3.up * 1.0f;
+                    int mask = ~LayerMask.GetMask("Player");
+
+                    bool stillTouching = Physics.Raycast(origin, probeDir, out RaycastHit ongoingHit, wallDetectionRange + 0.6f, mask) &&
+                                         IsWallRunObstacle(ongoingHit.collider);
+
+                    bool reachedWallEnd = activeWallCollider != null && (transform.position.z >= activeWallCollider.bounds.max.z - 0.2f);
+
+                    if (!stillTouching || reachedWallEnd || wallRunTimer > wallRunMaxDuration)
+                    {
+                        // Safely exit wall run and hop forward-inward to track
+                        DisengageWallRun(userInitiated: false);
+                        return;
+                    }
+                    else
+                    {
+                        // Smoothly track actual collider surface face
+                        float safeBuffer = (characterController != null ? characterController.radius : 0.35f) + 0.12f;
+                        targetWallX = wallSide == -1 ? (ongoingHit.point.x + safeBuffer) : (ongoingHit.point.x - safeBuffer);
+                    }
+                    break;
+
+                case MovementState.Sliding:
+                    if (!grounded)
+                    {
+                        EndSlideDirect();
+                        currentState = MovementState.Falling;
+                        return;
+                    }
+
+                    verticalVelocity = -2.0f;
+                    slideTimer -= Time.deltaTime;
+
+                    if (jumpBufferTimer > 0f && HasHeadroom())
+                    {
+                        EndSlideDirect();
+                        ExecuteJump();
+                        return;
+                    }
+
+                    if (slideTimer <= 0f && HasHeadroom())
+                    {
+                        EndSlideDirect();
+                        currentState = MovementState.Running;
+                    }
+                    break;
+
+                case MovementState.Dead:
+                    currentSpeed = 0f;
+                    break;
+            }
+        }
+
+        private void ExecuteJump()
+        {
+            jumpBufferTimer = 0f;
+            airborneTimer = 0f;
+            verticalVelocity = jumpForce;
+            currentState = MovementState.Jumping;
+        }
+
+        private void Land()
+        {
+            airborneTimer = 0f;
+            verticalVelocity = -2.0f;
+            currentState = MovementState.Running;
+
+            if (jumpBufferTimer > 0f)
+            {
+                ExecuteJump();
+            }
+            else if (slideBufferTimer > 0f)
+            {
+                ExecuteSlide();
+            }
+        }
+
+        private void ExecuteSlide()
+        {
+            slideBufferTimer = 0f;
+            slideTimer = slideDuration;
+            currentState = MovementState.Sliding;
+
+            characterController.height = slidingHeight;
+            characterController.center = slidingCenter;
+        }
+
+        private void EndSlideDirect()
+        {
+            characterController.height = standingHeight;
+            characterController.center = standingCenter;
+        }
+
+        public bool HasHeadroom()
+        {
+            if (characterController == null) return true;
+
+            float radius = characterController.radius * 0.85f;
+            Vector3 bottomSphere = transform.position + Vector3.up * (slidingHeight - radius);
+            float castDistance = (standingHeight - slidingHeight) + 0.1f;
+
+            int obstacleLayerMask = LayerMask.GetMask("Default", "Obstacle_Slide");
+            if (obstacleLayerMask == 0) obstacleLayerMask = ~LayerMask.GetMask("Player");
+
+            bool blocked = Physics.SphereCast(
+                bottomSphere,
+                radius,
+                Vector3.up,
+                out RaycastHit hit,
+                castDistance,
+                obstacleLayerMask,
+                QueryTriggerInteraction.Collide
+            );
+
+            return !blocked;
+        }
+
+        #endregion
+
+        #region Authoritative Movement
+
+        private void ApplyAuthoritativeMovement()
+        {
+            if (currentState == MovementState.WallRunning)
+            {
+                currentSpeed = baseSpeed * wallRunSpeedMultiplier;
+
+                // Smooth lateral guidance against wall surface
+                float lateralVel = (targetWallX - transform.position.x) * 10.0f;
+                Vector3 velocity = new Vector3(lateralVel, 0f, currentSpeed);
+                characterController.Move(velocity * Time.deltaTime);
+                return;
+            }
+
+            // Normal running / jumping / sliding forward movement
+            float accelRatio = Mathf.Clamp01(runTimer / accelerationTime);
+            float targetBase = Mathf.Lerp(0f, baseSpeed, accelRatio);
+            float speed = targetBase * (isSprinting ? sprintMultiplier : 1.0f);
+
+            if (isStumbling)
+            {
+                float ratio = Mathf.Clamp01(stumbleTimer / stumbleDuration);
+                float mult = Mathf.Lerp(1.0f, stumbleSpeedMultiplier, ratio);
+                speed *= mult;
+            }
+
+            currentSpeed = speed;
+
+            // Track centering: gently correct lateral drift toward active level track center
+            float centeringSpeed = currentState == MovementState.Jumping ? wallDisengageInwardForce : 8.0f;
+            float lateralCorrection = (_trackCenterX - transform.position.x) * centeringSpeed;
+
+            Vector3 normalVelocity = new Vector3(lateralCorrection, verticalVelocity, currentSpeed);
+            characterController.Move(normalVelocity * Time.deltaTime);
+        }
+
+        #endregion
+
+        #region Collisions & Obstacles
+
+        private void OnTriggerEnter(Collider other)
+        {
+            if (other.CompareTag("Finish") || other.gameObject.name.Contains("Finish") || other.gameObject.name.Contains("Goal"))
+            {
+                // Ensure finish trigger belongs to active level
+                if (Mathf.Abs(other.transform.position.x - transform.position.x) < 10.0f)
+                {
+                    ReachFinishLine();
+                    return;
+                }
+            }
+
+            if (other.CompareTag("Obstacle_Vault"))
+            {
+                if (IsJumping && transform.position.y >= 0.7f)
+                {
+                    lastClearedObstacleZ = other.transform.position.z;
+                    return;
+                }
+
+                if (Mathf.Abs(other.transform.position.z - lastClearedObstacleZ) > 1.5f)
+                {
+                    TriggerStumble(stumbleDuration, other.transform.position.z, true);
+                }
+                return;
+            }
+
+            if (other.CompareTag("Obstacle_Slide"))
+            {
+                if (IsSliding)
+                {
+                    lastClearedObstacleZ = other.transform.position.z;
+                    return;
+                }
+
+                if (Mathf.Abs(other.transform.position.z - lastClearedObstacleZ) > 1.5f)
+                {
+                    TriggerStumble(stumbleDuration, other.transform.position.z, false);
+                }
+                return;
+            }
+        }
+
+        private void OnControllerColliderHit(ControllerColliderHit hit)
+        {
+            if (hit.normal.z < -0.5f)
+            {
+                if (hit.gameObject.CompareTag("Obstacle_Vault") && !IsJumping)
+                {
+                    if (Mathf.Abs(hit.transform.position.z - lastClearedObstacleZ) > 1.5f)
+                    {
+                        TriggerStumble(stumbleDuration, hit.transform.position.z, true);
+                    }
+                }
+                else if (hit.gameObject.CompareTag("Obstacle_Slide") && !IsSliding)
+                {
+                    if (Mathf.Abs(hit.transform.position.z - lastClearedObstacleZ) > 1.5f)
+                    {
+                        TriggerStumble(stumbleDuration, hit.transform.position.z, false);
+                    }
+                }
+            }
+        }
+
+        public void TriggerStumble(float duration, float obstacleZ, bool isVaultBlock)
+        {
+            if (Mathf.Abs(obstacleZ - lastStumbleZ) < 1.0f && isStumbling) return;
+
+            lastStumbleZ = obstacleZ;
+            isStumbling = true;
+            stumbleTimer = duration;
+
+            if (currentState == MovementState.WallRunning)
+            {
+                DisengageWallRun(userInitiated: false);
+            }
+
+            if (IsSliding && HasHeadroom())
+            {
+                EndSlideDirect();
+                currentState = MovementState.Running;
+            }
+        }
+
+        public void SetInVaultTrigger(bool inTrigger, Transform obstacleTransform)
+        {
+        }
+
+        #endregion
+
+        #region Animation & Visuals
+
+        private void UpdateAnimator()
+        {
+            if (animator == null) return;
+            animator.SetBool("IsJumping", IsJumping);
+            animator.SetBool("IsSliding", IsSliding);
+            animator.SetBool("IsVaulting", false);
+        }
+
+        #endregion
+
+        #region Goal & Teleport API
+
+        public void ReachFinishLine()
+        {
+            if (hasCompletedLevel) return;
+            hasCompletedLevel = true;
+            Time.timeScale = 0f;
+
+            if (GameManager.Instance != null)
+            {
+                GameManager.Instance.TriggerGameOver(true);
+            }
+        }
+
+        private void CheckBoundsAndGoals()
+        {
+            if (transform.position.z >= (finishZ - 0.5f) && !hasCompletedLevel)
+            {
+                ReachFinishLine();
+                return;
+            }
+
+            if (transform.position.y < -5f)
+            {
+                currentState = MovementState.Dead;
+                if (GameManager.Instance != null)
+                {
+                    GameManager.Instance.TriggerGameOver(false);
+                }
+                else
+                {
+                    RestartRun();
+                }
+            }
+        }
+
+        /// <summary>
+        /// Public teleport API for multi-level transitions and clean respawns.
+        /// Temporarily disables CharacterController to safely write world position,
+        /// synchronizes track center X coordinate, and resets all movement accumulators.
+        /// </summary>
+        public void TeleportToStart(Vector3 spawnPoint)
+        {
+            if (characterController != null)
+            {
+                characterController.enabled = false;
+            }
+
+            transform.position = spawnPoint;
+
+            if (characterController != null)
+            {
+                characterController.enabled = true;
+            }
+
+            _trackCenterX = spawnPoint.x;
+            currentSpeed = 0f;
+            verticalVelocity = -2.0f;
+            runTimer = 0f;
+            airborneTimer = 0f;
+            currentState = MovementState.Running;
+            isSprinting = false;
+            isStumbling = false;
+            hasCompletedLevel = false;
+            sprintTimer = 0f;
+            sprintCooldownTimer = 0f;
+            jumpBufferTimer = 0f;
+            slideBufferTimer = 0f;
+            lastStumbleZ = -999f;
+            lastClearedObstacleZ = -999f;
+            wallSide = 0;
+            activeWallCollider = null;
+            wallRunTimer = 0f;
+            wallCooldownTimer = 0f;
+
+            if (visualRoot != null)
+            {
+                visualRoot.localRotation = defaultVisualLocalRotation;
+            }
+
+            if (characterController != null)
+            {
+                characterController.height = standingHeight;
+                characterController.center = standingCenter;
+            }
+        }
+
+        public void RestartRun()
+        {
+            if (GameManager.Instance != null)
+            {
+                GameManager.Instance.RestartGame();
+            }
+            else
+            {
+                TeleportToStart(new Vector3(_trackCenterX, 1.1f, 0f));
+            }
+        }
+
+        private void CheckRestartInput()
+        {
+            bool rPressed = false;
+            if (Keyboard.current != null)
+            {
+                rPressed = Keyboard.current.rKey.wasPressedThisFrame;
+            }
+            else
+            {
+                try { rPressed = Input.GetKeyDown(KeyCode.R); } catch { }
+            }
+            if (rPressed)
+            {
+                RestartRun();
+            }
+        }
+
+        #endregion
+
+        #region HUD & Vector Style Overlay
+
+        private void InitStyles()
+        {
+            if (stylesInitialized) return;
+            stylesInitialized = true;
+
+            headerStyle = new GUIStyle(GUI.skin.label)
+            {
+                fontSize = 18,
+                fontStyle = FontStyle.Bold,
+                alignment = TextAnchor.UpperLeft
+            };
+            headerStyle.normal.textColor = Color.white;
+
+            statStyle = new GUIStyle(GUI.skin.label)
+            {
+                fontSize = 14,
+                fontStyle = FontStyle.Normal
+            };
+            statStyle.normal.textColor = new Color(0.85f, 0.9f, 1.0f);
+
+            sprintStyle = new GUIStyle(statStyle);
+
+            hintStyle = new GUIStyle(GUI.skin.label)
+            {
+                fontSize = 13,
+                fontStyle = FontStyle.Bold
+            };
+            hintStyle.normal.textColor = new Color(0.7f, 0.85f, 1f);
+
+            stumbleStyle = new GUIStyle(headerStyle)
+            {
+                alignment = TextAnchor.MiddleCenter,
+                fontSize = 24
+            };
+            stumbleStyle.normal.textColor = Color.red;
+
+            winTitleStyle = new GUIStyle(GUI.skin.label)
+            {
+                alignment = TextAnchor.MiddleCenter,
+                fontSize = 36,
+                fontStyle = FontStyle.Bold
+            };
+            winTitleStyle.normal.textColor = new Color(0.1f, 1.0f, 0.4f);
+
+            subStyle = new GUIStyle(GUI.skin.label)
+            {
+                alignment = TextAnchor.MiddleCenter,
+                fontSize = 18,
+                fontStyle = FontStyle.Bold
+            };
+            subStyle.normal.textColor = Color.white;
+        }
+
+        private void OnGUI()
+        {
+            if (GameManager.Instance != null && GameManager.Instance.CurrentState != GameState.Playing)
+            {
+                return;
+            }
+
+            InitStyles();
+
+            // HUD Container Box
+            GUI.Box(new Rect(15, 15, 290, 115), GUIContent.none);
+
+            GUILayout.BeginArea(new Rect(25, 20, 270, 105));
+            int levelNum = _trackCenterX > 50f ? 2 : 1;
+            GUILayout.Label($"VECTOR // SECTOR {levelNum}", headerStyle);
+            GUILayout.Label($"SPEED: {currentSpeed:F1} m/s", statStyle);
+            GUILayout.Label($"DISTANCE: {Mathf.Max(0f, transform.position.z):F0} m / {finishZ:F0} m", statStyle);
+
+            string sprintStatus = isSprinting ? "SPRINTING!" : (sprintCooldownTimer <= 0f ? "READY [D / Right]" : $"COOLDOWN ({sprintCooldownTimer:F1}s)");
+            sprintStyle.normal.textColor = isSprinting ? Color.cyan : (sprintCooldownTimer <= 0f ? Color.green : Color.yellow);
+            GUILayout.Label($"BURST: {sprintStatus}", sprintStyle);
+            GUILayout.EndArea();
+
+            // Controls Hint Box (Bottom-Left)
+            GUI.Box(new Rect(15, Screen.height - 55, 520, 40), GUIContent.none);
+            GUI.Label(new Rect(25, Screen.height - 47, 500, 30), "CONTROLS: [W/Up] Jump / Wall-Run | [S/Down] Slide | [D/Right] Sprint", hintStyle);
+
+            // Stumble Alert
+            if (isStumbling)
+            {
+                GUI.Label(new Rect(Screen.width / 2f - 180, 80, 360, 40), "STUMBLED! HUNTER CLOSING IN!", stumbleStyle);
+            }
+        }
+
+        #endregion
+    }
+}

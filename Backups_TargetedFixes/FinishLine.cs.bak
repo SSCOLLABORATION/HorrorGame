@@ -1,0 +1,39 @@
+using UnityEngine;
+
+namespace VectorParkour
+{
+    /// <summary>
+    /// Placed on the finish line gate at the end of the track.
+    /// When the player passes through the trigger of the active level, it triggers level completion.
+    /// Spatially isolates Level 1 and Level 2 triggers based on track X coordinate.
+    /// </summary>
+    public class FinishLine : MonoBehaviour
+    {
+        private bool hasTriggered = false;
+
+        private void OnTriggerEnter(Collider other)
+        {
+            if (hasTriggered) return;
+
+            PlayerParkourController player = other.GetComponent<PlayerParkourController>();
+            if (player == null) player = other.GetComponentInParent<PlayerParkourController>();
+
+            if (player != null)
+            {
+                // Ensure this finish line trigger is for the player's active level track (within 10m on X)
+                if (Mathf.Abs(player.transform.position.x - transform.position.x) > 10.0f)
+                {
+                    return;
+                }
+
+                hasTriggered = true;
+                player.ReachFinishLine();
+            }
+        }
+
+        public void ResetFinishLine()
+        {
+            hasTriggered = false;
+        }
+    }
+}
