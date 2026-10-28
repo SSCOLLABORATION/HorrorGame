@@ -9,16 +9,17 @@ namespace VectorParkour
     /// <summary>
     /// Core Player Parkour Controller inspired by Vector.
     /// Handles deterministic auto-run, snappy 1:1 gesture controls (W/Up, S/Down, D/Right),
-    /// input-locked vault interpolation, collider-halving slides, fast-falling, and stumble penalties.
+    /// input-buffered vault interpolation, collider-halving slides, fast-falling, stumble penalties,
+    /// zero-lag cached HUD, and victory / finish line detection.
     /// </summary>
     [RequireComponent(typeof(CharacterController))]
     public class PlayerParkourController : MonoBehaviour
     {
         [Header("Movement Settings")]
         [SerializeField] private float baseSpeed = 9.5f;
-        [SerializeField] private float startAccelerationTime = 1.0f;
+        [SerializeField] private float startAccelerationTime = 0.8f;
         [SerializeField] private float gravity = -24f;
-        [SerializeField] private float jumpForce = 8.5f;
+        [SerializeField] private float jumpForce = 9.2f;
         [SerializeField] private float fastFallSpeed = -22f;
 
         [Header("Sprint Burst")]
@@ -27,14 +28,17 @@ namespace VectorParkour
         [SerializeField] private float sprintCooldown = 3.0f;
 
         [Header("Slide Settings")]
-        [SerializeField] private float slideDuration = 0.6f;
+        [SerializeField] private float slideDuration = 0.65f;
 
         [Header("Vault Settings")]
-        [SerializeField] private float vaultDuration = 0.25f;
+        [SerializeField] private float vaultDuration = 0.28f;
 
         [Header("Stumble Settings")]
-        [SerializeField] private float stumbleDuration = 0.5f;
-        [SerializeField] private float stumbleSpeedMultiplier = 0.35f;
+        [SerializeField] private float stumbleDuration = 0.45f;
+        [SerializeField] private float stumbleSpeedMultiplier = 0.5f;
+
+        [Header("Goal")]
+        [SerializeField] private float finishZ = 216.0f;
 
         [Header("References")]
         [SerializeField] private Transform visualRoot;
@@ -50,10 +54,16 @@ namespace VectorParkour
         public bool IsSliding { get; private set; }
         public bool IsStumbling { get; private set; }
         public bool IsSprinting { get; private set; }
+        public bool HasCompletedLevel { get; private set; }
         public bool IsGrounded => characterController != null && characterController.isGrounded;
+        public bool IsJumping => isIntentionalJump || (airborneTimer > 0.15f && !IsVaulting);
         public float CurrentSpeed => currentForwardSpeed;
         public float BaseSpeed => baseSpeed;
         public float SprintCooldownRemaining => Mathf.Max(0f, sprintCooldownTimer);
+
+        // Airborne tracking & coyote debounce to eliminate animation flicker
+        private bool isIntentionalJump = false;
+        private float airborneTimer = 0f;
 
         // Timers & Interpolation
         private float runTimer = 0f;
@@ -64,6 +74,15 @@ namespace VectorParkour
         private float slideTimer = 0f;
         private float vaultTimer = 0f;
         private float stumbleTimer = 0f;
+
+        // Input Buffering (0.18s window for fluid responsiveness)
+        private float jumpInputBufferTimer = 0f;
+        private float slideInputBufferTimer = 0f;
+        private const float InputBufferDuration = 0.18f;
+
+        // Grace period for initial ground settling
+        private float settleTimer = 0f;
+        private const float SettleGracePeriod = 0.15f;
 
         // Vault Math
         private Vector3 vaultStartPos;
@@ -80,41 +99,108 @@ namespace VectorParkour
         // Stumble Recovery Tracking
         private float lastStumbleObstacleZ = -999f;
 
-        private void Awake()
+        // Cached GUIStyles to eliminate GC stutter during play
+        private GUIStyle headerStyle;
+        private GUIStyle statStyle;
+        private GUIStyle sprintStyle;
+        private GUIStyle hintStyle;
+        private GUIStyle stumbleStyle;
+        private GUIStyle winTitleStyle;
+        private GUIStyle subStyle;
+        private bool stylesInitialized = false;
+
+        private void EnsureComponents()
         {
-            characterController = GetComponent<CharacterController>();
-            originalHeight = characterController.height;
-            originalCenter = characterController.center;
+            if (characterController == null)
+            {
+                characterController = GetComponent<CharacterController>();
+                if (characterController != null)
+                {
+                    characterController.skinWidth = 0.015f;
+                    characterController.minMoveDistance = 0f;
+                    originalHeight = characterController.height;
+                    originalCenter = characterController.center;
+                }
+            }
 
             if (visualRoot == null)
             {
                 Transform foundVisual = transform.Find("Visual");
-                if (foundVisual != null) visualRoot = foundVisual;
-                else visualRoot = transform;
+                visualRoot = foundVisual != null ? foundVisual : transform;
             }
 
-            if (visualRoot != null && visualRoot != transform)
+            if (visualRoot != null && visualRoot != transform && defaultVisualScale == Vector3.one)
             {
                 defaultVisualScale = visualRoot.localScale;
                 defaultVisualLocalPos = visualRoot.localPosition;
             }
 
-            animator = GetComponentInChildren<Animator>();
+            if (animator == null)
+            {
+                animator = GetComponentInChildren<Animator>();
+            }
+        }
+
+        private void Awake()
+        {
+            Application.runInBackground = true;
+            Application.targetFrameRate = 60;
+            EnsureComponents();
+        }
+
+        private void Start()
+        {
+            EnsureComponents();
+
+            // Ignore collision between Player and Chaser so they NEVER push or jostle each other
+            ChaserAI chaser = UnityEngine.Object.FindFirstObjectByType<ChaserAI>();
+            if (chaser != null)
+            {
+                var chaserCC = chaser.GetComponent<CharacterController>();
+                if (chaserCC != null && characterController != null)
+                {
+                    Physics.IgnoreCollision(characterController, chaserCC, true);
+                }
+            }
+
+            if (characterController != null) characterController.Move(Vector3.down * 0.5f);
+            verticalVelocity = -4f;
+            settleTimer = 0f;
         }
 
         private void Update()
         {
+            EnsureComponents();
+
+            if (HasCompletedLevel)
+            {
+                CheckRestartInput();
+                return;
+            }
+
             if (Time.timeScale <= 0f)
             {
                 CheckRestartInput();
                 return;
             }
 
+            settleTimer += Time.deltaTime;
+            if (settleTimer < SettleGracePeriod)
+            {
+                if (!characterController.isGrounded)
+                {
+                    characterController.Move(Vector3.down * 4f * Time.deltaTime);
+                }
+                return;
+            }
+
             HandleCooldowns();
             HandleInput();
+            ProcessBufferedActions();
             UpdateMovement();
             UpdateVisualFeedback();
             UpdateAnimator();
+            CheckFinishLine();
             CheckFallOutOfBounds();
         }
 
@@ -123,6 +209,16 @@ namespace VectorParkour
             if (sprintCooldownTimer > 0f)
             {
                 sprintCooldownTimer -= Time.deltaTime;
+            }
+
+            if (jumpInputBufferTimer > 0f)
+            {
+                jumpInputBufferTimer -= Time.deltaTime;
+            }
+
+            if (slideInputBufferTimer > 0f)
+            {
+                slideInputBufferTimer -= Time.deltaTime;
             }
         }
 
@@ -145,41 +241,63 @@ namespace VectorParkour
             rightPressed = Input.GetKeyDown(KeyCode.D) || Input.GetKeyDown(KeyCode.RightArrow);
 #endif
 
-            // During an active vault, input is strictly locked
             if (IsVaulting) return;
 
-            // 1. UP GESTURE (W / Up Arrow): Contextual Vault OR Jump
+            // Buffer Jump / Vault
             if (upPressed)
             {
-                if (canVaultInTrigger && currentVaultObstacle != null)
-                {
-                    StartVault(currentVaultObstacle);
-                    return;
-                }
-                else if (characterController.isGrounded && !IsSliding)
-                {
-                    verticalVelocity = jumpForce;
-                }
+                jumpInputBufferTimer = InputBufferDuration;
             }
 
-            // 2. DOWN GESTURE (S / Down Arrow): Fast-fall OR Contextual Slide
+            // Buffer Slide / Fast-Fall
             if (downPressed)
             {
                 if (!characterController.isGrounded)
                 {
-                    // Fast-fall: Snaps downward velocity
                     verticalVelocity = fastFallSpeed;
                 }
-                else if (!IsSliding)
+                else
                 {
-                    StartSlide();
+                    slideInputBufferTimer = InputBufferDuration;
                 }
             }
 
-            // 3. RIGHT GESTURE (D / Right Arrow): Sprint Burst
+            // Sprint Burst
             if (rightPressed && !IsSprinting && sprintCooldownTimer <= 0f)
             {
                 StartSprint();
+            }
+        }
+
+        private void ProcessBufferedActions()
+        {
+            if (IsVaulting) return;
+
+            // Process Jump / Vault buffer
+            if (jumpInputBufferTimer > 0f)
+            {
+                if (canVaultInTrigger && currentVaultObstacle != null)
+                {
+                    StartVault(currentVaultObstacle);
+                    jumpInputBufferTimer = 0f;
+                    return;
+                }
+                else if (characterController.isGrounded && !IsSliding)
+                {
+                    isIntentionalJump = true;
+                    verticalVelocity = jumpForce;
+                    jumpInputBufferTimer = 0f;
+                }
+            }
+
+            // Process Slide buffer
+            if (slideInputBufferTimer > 0f)
+            {
+                if (characterController.isGrounded && !IsSliding)
+                {
+                    StartSlide();
+                    slideInputBufferTimer = 0f;
+                }
             }
         }
 
@@ -252,14 +370,18 @@ namespace VectorParkour
             // Vertical physics / Gravity
             if (characterController.isGrounded)
             {
-                if (verticalVelocity < 0f)
+                airborneTimer = 0f;
+                if (verticalVelocity <= 0.1f)
                 {
-                    verticalVelocity = -2f; // Slight downward grounding stick
+                    isIntentionalJump = false;
+                    verticalVelocity = -4f; // Solid downward stick to eliminate floor seam bounce
                 }
             }
             else
             {
+                airborneTimer += Time.deltaTime;
                 verticalVelocity += gravity * Time.deltaTime;
+                verticalVelocity = Mathf.Max(verticalVelocity, -28f);
             }
 
             // Apply forward velocity (along Z+) and vertical velocity
@@ -282,9 +404,8 @@ namespace VectorParkour
 
             // Target landing point is past the obstacle's Z bounds
             float obstacleMaxZ = obstacleCollider != null ? obstacleCollider.bounds.max.z : obstacle.position.z + 0.6f;
-            vaultTargetZ = obstacleMaxZ + 1.2f;
+            vaultTargetZ = obstacleMaxZ + 1.3f;
 
-            // Reset vertical velocity
             verticalVelocity = 0f;
         }
 
@@ -321,47 +442,59 @@ namespace VectorParkour
             sprintTimer = sprintDuration;
         }
 
-        public void TriggerStumble(float duration, float obstacleZ)
+        public void TriggerStumble(float duration, float obstacleZ, bool isVaultBlock)
         {
-            // Avoid duplicate rapid stumble triggers for the same obstacle
             if (Mathf.Abs(obstacleZ - lastStumbleObstacleZ) < 1.0f && IsStumbling) return;
 
             lastStumbleObstacleZ = obstacleZ;
             IsStumbling = true;
             stumbleTimer = duration;
 
-            // End active slide if stumbled
             if (IsSliding)
             {
                 EndSlide();
             }
 
-            // Push slightly forward/up to clear collision front face
-            characterController.Move(new Vector3(0f, 0.4f, 0.5f));
+            // Speed penalty alone handles stumble cleanly — NO recursive Move to prevent physics pushback
         }
 
         #endregion
 
         #region Collision & Detection
 
+        private void OnTriggerEnter(Collider other)
+        {
+            if (other.CompareTag("Obstacle_Vault"))
+            {
+                if (!IsVaulting)
+                {
+                    TriggerStumble(stumbleDuration, other.transform.position.z, true);
+                }
+            }
+            else if (other.CompareTag("Obstacle_Slide"))
+            {
+                if (!IsSliding)
+                {
+                    TriggerStumble(stumbleDuration, other.transform.position.z, false);
+                }
+            }
+            else if (other.CompareTag("FinishLine") || other.gameObject.name.Contains("Finish") || other.gameObject.name.Contains("Goal"))
+            {
+                ReachFinishLine();
+            }
+        }
+
         private void OnControllerColliderHit(ControllerColliderHit hit)
         {
-            // Detect hitting the front face of an obstacle (normal facing backwards along -Z)
-            if (hit.normal.z < -0.55f)
+            if (hit.normal.z < -0.5f)
             {
-                if (hit.gameObject.CompareTag("Obstacle_Vault"))
+                if (hit.gameObject.CompareTag("Obstacle_Vault") && !IsVaulting)
                 {
-                    if (!IsVaulting)
-                    {
-                        TriggerStumble(stumbleDuration, hit.transform.position.z);
-                    }
+                    TriggerStumble(stumbleDuration, hit.transform.position.z, true);
                 }
-                else if (hit.gameObject.CompareTag("Obstacle_Slide"))
+                else if (hit.gameObject.CompareTag("Obstacle_Slide") && !IsSliding)
                 {
-                    if (!IsSliding)
-                    {
-                        TriggerStumble(stumbleDuration, hit.transform.position.z);
-                    }
+                    TriggerStumble(stumbleDuration, hit.transform.position.z, false);
                 }
             }
         }
@@ -380,30 +513,34 @@ namespace VectorParkour
         {
             if (visualRoot == null || visualRoot == transform) return;
 
+            if (animator != null)
+            {
+                visualRoot.localScale = defaultVisualScale;
+                visualRoot.localPosition = defaultVisualLocalPos;
+                visualRoot.localRotation = Quaternion.identity;
+                return;
+            }
+
             if (IsSliding)
             {
-                // Slide pose: Squash down and lean backwards
                 visualRoot.localScale = new Vector3(defaultVisualScale.x, defaultVisualScale.y * 0.5f, defaultVisualScale.z * 1.25f);
-                visualRoot.localPosition = new Vector3(defaultVisualLocalPos.x, -0.45f, defaultVisualLocalPos.z - 0.2f);
+                visualRoot.localPosition = defaultVisualLocalPos;
                 visualRoot.localRotation = Quaternion.Euler(-18f, 0f, 0f);
             }
             else if (IsVaulting)
             {
-                // Vault pose: Hurdle forward tilt
                 visualRoot.localScale = defaultVisualScale;
                 visualRoot.localPosition = new Vector3(defaultVisualLocalPos.x, 0.2f, defaultVisualLocalPos.z + 0.1f);
                 visualRoot.localRotation = Quaternion.Euler(22f, 0f, 0f);
             }
             else if (IsStumbling)
             {
-                // Stumble pose: Stagger back
                 visualRoot.localScale = defaultVisualScale;
                 visualRoot.localPosition = defaultVisualLocalPos;
                 visualRoot.localRotation = Quaternion.Euler(-25f, 0f, 0f);
             }
             else
             {
-                // Normal running pose: Aerodynamic forward lean
                 float leanAngle = IsSprinting ? 14f : 8f;
                 visualRoot.localScale = defaultVisualScale;
                 visualRoot.localPosition = defaultVisualLocalPos;
@@ -414,35 +551,68 @@ namespace VectorParkour
         private void UpdateAnimator()
         {
             if (animator == null) return;
+            animator.SetBool("IsJumping", IsJumping);
             animator.SetBool("IsSliding", IsSliding);
             animator.SetBool("IsVaulting", IsVaulting);
         }
 
         #endregion
 
-        #region Fall & Restart
+        #region Fall & Restart & Finish
+
+        public void ReachFinishLine()
+        {
+            if (HasCompletedLevel) return;
+            HasCompletedLevel = true;
+            Time.timeScale = 0f;
+        }
+
+        private void CheckFinishLine()
+        {
+            if (transform.position.z >= (finishZ - 0.5f) && !HasCompletedLevel)
+            {
+                ReachFinishLine();
+            }
+        }
 
         private void CheckFallOutOfBounds()
         {
-            if (transform.position.y < -6f)
+            if (transform.position.y < -5f)
             {
-                RestartRun();
+                if (Vector3D.Core.GameManager.Instance != null)
+                {
+                    Vector3D.Core.GameManager.Instance.TriggerGameOver(false);
+                }
+                else
+                {
+                    RestartRun();
+                }
             }
         }
 
         public void RestartRun()
         {
             Time.timeScale = 1f;
-            transform.position = new Vector3(0f, 0.1f, 0f);
+
+            characterController.enabled = false;
+            transform.position = new Vector3(0f, 0.5f, 0f);
+            characterController.enabled = true;
+
             currentForwardSpeed = 0f;
-            verticalVelocity = 0f;
+            verticalVelocity = -4f;
             runTimer = 0f;
+            settleTimer = 0f;
+            isIntentionalJump = false;
+            airborneTimer = 0f;
             IsVaulting = false;
             IsSliding = false;
             IsStumbling = false;
             IsSprinting = false;
+            HasCompletedLevel = false;
             sprintTimer = 0f;
             sprintCooldownTimer = 0f;
+            jumpInputBufferTimer = 0f;
+            slideInputBufferTimer = 0f;
 
             if (characterController != null)
             {
@@ -450,11 +620,18 @@ namespace VectorParkour
                 characterController.center = originalCenter;
             }
 
-            // Also reset chaser position
+            characterController.Move(Vector3.down * 0.5f);
+
             ChaserAI chaser = UnityEngine.Object.FindFirstObjectByType<ChaserAI>();
             if (chaser != null)
             {
                 chaser.ResetChaser();
+            }
+
+            FinishLine fl = UnityEngine.Object.FindFirstObjectByType<FinishLine>();
+            if (fl != null)
+            {
+                fl.ResetFinishLine();
             }
         }
 
@@ -474,12 +651,14 @@ namespace VectorParkour
 
         #endregion
 
-        #region Vector-Style GUI HUD
+        #region Zero-Allocation Vector-Style GUI HUD
 
-        private void OnGUI()
+        private void InitStyles()
         {
-            // Vector Minimalist HUD
-            GUIStyle headerStyle = new GUIStyle(GUI.skin.label)
+            if (stylesInitialized) return;
+            stylesInitialized = true;
+
+            headerStyle = new GUIStyle(GUI.skin.label)
             {
                 fontSize = 18,
                 fontStyle = FontStyle.Bold,
@@ -487,12 +666,54 @@ namespace VectorParkour
             };
             headerStyle.normal.textColor = Color.white;
 
-            GUIStyle statStyle = new GUIStyle(GUI.skin.label)
+            statStyle = new GUIStyle(GUI.skin.label)
             {
                 fontSize = 14,
                 fontStyle = FontStyle.Normal
             };
             statStyle.normal.textColor = new Color(0.85f, 0.9f, 1.0f);
+
+            sprintStyle = new GUIStyle(statStyle);
+
+            hintStyle = new GUIStyle(GUI.skin.label)
+            {
+                fontSize = 13,
+                fontStyle = FontStyle.Bold
+            };
+            hintStyle.normal.textColor = new Color(0.7f, 0.85f, 1f);
+
+            stumbleStyle = new GUIStyle(headerStyle)
+            {
+                alignment = TextAnchor.MiddleCenter,
+                fontSize = 24
+            };
+            stumbleStyle.normal.textColor = Color.red;
+
+            winTitleStyle = new GUIStyle(GUI.skin.label)
+            {
+                alignment = TextAnchor.MiddleCenter,
+                fontSize = 36,
+                fontStyle = FontStyle.Bold
+            };
+            winTitleStyle.normal.textColor = new Color(0.1f, 1.0f, 0.4f);
+
+            subStyle = new GUIStyle(GUI.skin.label)
+            {
+                alignment = TextAnchor.MiddleCenter,
+                fontSize = 18,
+                fontStyle = FontStyle.Bold
+            };
+            subStyle.normal.textColor = Color.white;
+        }
+
+        private void OnGUI()
+        {
+            if (Vector3D.Core.GameManager.Instance != null && Vector3D.Core.GameManager.Instance.CurrentState != Vector3D.Core.GameState.Playing)
+            {
+                return;
+            }
+
+            InitStyles();
 
             // HUD Container Box
             GUI.Box(new Rect(15, 15, 290, 115), GUIContent.none);
@@ -500,34 +721,43 @@ namespace VectorParkour
             GUILayout.BeginArea(new Rect(25, 20, 270, 105));
             GUILayout.Label("VECTOR // PARKOUR RUNNER", headerStyle);
             GUILayout.Label($"SPEED: {currentForwardSpeed:F1} m/s", statStyle);
-            GUILayout.Label($"DISTANCE: {transform.position.z:F0} m / 220 m", statStyle);
+            GUILayout.Label($"DISTANCE: {Mathf.Max(0f, transform.position.z):F0} m / {finishZ:F0} m", statStyle);
 
-            string sprintStatus = IsSprinting ? "SPRINTING!" : (sprintCooldownTimer <= 0f ? "READY [D]" : $"COOLDOWN ({sprintCooldownTimer:F1}s)");
-            GUIStyle sprintStyle = new GUIStyle(statStyle);
+            string sprintStatus = IsSprinting ? "SPRINTING!" : (sprintCooldownTimer <= 0f ? "READY [D / Right]" : $"COOLDOWN ({sprintCooldownTimer:F1}s)");
             sprintStyle.normal.textColor = IsSprinting ? Color.cyan : (sprintCooldownTimer <= 0f ? Color.green : Color.yellow);
             GUILayout.Label($"BURST: {sprintStatus}", sprintStyle);
             GUILayout.EndArea();
 
             // Controls Hint Box (Bottom-Left)
-            GUI.Box(new Rect(15, Screen.height - 55, 420, 40), GUIContent.none);
-            GUIStyle hintStyle = new GUIStyle(GUI.skin.label)
-            {
-                fontSize = 13,
-                fontStyle = FontStyle.Bold
-            };
-            hintStyle.normal.textColor = new Color(0.7f, 0.85f, 1f);
-            GUI.Label(new Rect(25, Screen.height - 47, 400, 30), "CONTROLS: [W/Up] Jump/Vault | [S/Down] Slide/Fast-Fall | [D/Right] Sprint", hintStyle);
+            GUI.Box(new Rect(15, Screen.height - 55, 460, 40), GUIContent.none);
+            GUI.Label(new Rect(25, Screen.height - 47, 440, 30), "CONTROLS: [W/Up] Jump/Vault | [S/Down] Slide/Fast-Fall | [D/Right] Sprint", hintStyle);
 
             // Stumble Alert
             if (IsStumbling)
             {
-                GUIStyle stumbleStyle = new GUIStyle(headerStyle)
+                GUI.Label(new Rect(Screen.width / 2f - 180, 80, 360, 40), "STUMBLED! HUNTER CLOSING IN!", stumbleStyle);
+            }
+
+            // Victory Screen
+            if (HasCompletedLevel)
+            {
+                GUI.color = new Color(0f, 0f, 0f, 0.75f);
+                GUI.DrawTexture(new Rect(0, 0, Screen.width, Screen.height), Texture2D.whiteTexture);
+                GUI.color = Color.white;
+
+                float boxW = 500;
+                float boxH = 210;
+                float startX = (Screen.width - boxW) / 2f;
+                float startY = (Screen.height - boxH) / 2f;
+
+                GUI.Box(new Rect(startX, startY, boxW, boxH), GUIContent.none);
+                GUI.Label(new Rect(startX, startY + 25, boxW, 45), "ESCAPED! LEVEL COMPLETE", winTitleStyle);
+                GUI.Label(new Rect(startX, startY + 80, boxW, 30), "You outran the enforcer across the rooftops.", subStyle);
+
+                if (GUI.Button(new Rect(startX + 150, startY + 135, 200, 45), "PLAY AGAIN [R]"))
                 {
-                    alignment = TextAnchor.MiddleCenter,
-                    fontSize = 24
-                };
-                stumbleStyle.normal.textColor = Color.red;
-                GUI.Label(new Rect(Screen.width / 2f - 150, 80, 300, 40), "STUMBLED! HUNTER CLOSING IN!", stumbleStyle);
+                    RestartRun();
+                }
             }
         }
 

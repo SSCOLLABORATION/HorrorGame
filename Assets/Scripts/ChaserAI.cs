@@ -2,6 +2,7 @@ using UnityEngine;
 #if ENABLE_INPUT_SYSTEM
 using UnityEngine.InputSystem;
 #endif
+using Vector3D.Core;
 
 namespace VectorParkour
 {
@@ -16,14 +17,14 @@ namespace VectorParkour
     {
         [Header("Target & Speed Settings")]
         [SerializeField] private Transform targetPlayer;
-        [SerializeField] private float baseFollowDistance = 6.0f;
-        [SerializeField] private float rubberBandAccSpeed = 9.0f;
-        [SerializeField] private float creepRate = 0.35f; // Creeps closer if player doesn't sprint
-        [SerializeField] private float catchDistance = 0.8f;
+        [SerializeField] private float baseFollowDistance = 14.0f;
+        [SerializeField] private float rubberBandAccSpeed = 6.0f;
+        [SerializeField] private float creepRate = 0.04f; // Very slow creep
+        [SerializeField] private float catchDistance = 0.5f;
 
         [Header("Obstacle Autonav")]
-        [SerializeField] private float detectionRange = 2.4f;
-        [SerializeField] private float jumpForce = 8.5f;
+        [SerializeField] private float detectionRange = 2.6f;
+        [SerializeField] private float jumpForce = 9.2f;
         [SerializeField] private float gravity = -24f;
         [SerializeField] private float vaultDuration = 0.28f;
         [SerializeField] private float slideDuration = 0.65f;
@@ -50,6 +51,16 @@ namespace VectorParkour
         private float vaultPeakY;
 
         private bool hasCaughtPlayer = false;
+        private float creepOffset = 0f;
+
+        // Airborne tracking & debounce
+        private bool isAIJumping = false;
+        private float airborneTimer = 0f;
+        public bool IsJumping => isAIJumping || (airborneTimer > 0.15f && !isVaulting);
+
+        // Grace period: allows physics & colliders to settle
+        private float settleTimer = 0f;
+        private const float SettleGracePeriod = 0.25f;
 
         private Vector3 defaultVisualScale = Vector3.one;
         private Vector3 defaultVisualLocalPos = Vector3.zero;
@@ -63,11 +74,19 @@ namespace VectorParkour
             }
         }
 
-        private void Awake()
+        private void EnsureComponents()
         {
-            characterController = GetComponent<CharacterController>();
-            originalHeight = characterController.height;
-            originalCenter = characterController.center;
+            if (characterController == null)
+            {
+                characterController = GetComponent<CharacterController>();
+                if (characterController != null)
+                {
+                    characterController.skinWidth = 0.015f;
+                    characterController.minMoveDistance = 0f;
+                    originalHeight = characterController.height;
+                    originalCenter = characterController.center;
+                }
+            }
 
             if (visualRoot == null)
             {
@@ -76,22 +95,41 @@ namespace VectorParkour
                 else visualRoot = transform;
             }
 
-            if (visualRoot != null && visualRoot != transform)
+            if (visualRoot != null && visualRoot != transform && defaultVisualScale == Vector3.one)
             {
                 defaultVisualScale = visualRoot.localScale;
                 defaultVisualLocalPos = visualRoot.localPosition;
             }
 
-            animator = GetComponentInChildren<Animator>();
+            if (animator == null)
+            {
+                animator = GetComponentInChildren<Animator>();
+            }
+        }
+
+        private void Awake()
+        {
+            EnsureComponents();
         }
 
         private void Start()
         {
+            EnsureComponents();
             FindPlayerReference();
-            if (targetPlayer != null)
+
+            // Zero collision with player
+            if (playerController != null && characterController != null)
             {
-                currentSpeed = playerController != null ? playerController.BaseSpeed : 9.5f;
+                var pcc = playerController.GetComponent<CharacterController>();
+                if (pcc != null) Physics.IgnoreCollision(characterController, pcc, true);
             }
+
+            // Start at 0 forward speed so chaser accelerates alongside the player
+            currentSpeed = 0f;
+            if (characterController != null) characterController.Move(Vector3.down * 0.5f);
+            verticalVelocity = -4f;
+            settleTimer = 0f;
+            creepOffset = 0f;
         }
 
         private void FindPlayerReference()
@@ -113,15 +151,34 @@ namespace VectorParkour
 
         private void Update()
         {
+            EnsureComponents();
             if (targetPlayer == null)
             {
                 FindPlayerReference();
                 if (targetPlayer == null) return;
             }
 
-            if (hasCaughtPlayer)
+            if (GameManager.Instance != null && GameManager.Instance.CurrentState != GameState.Playing)
+            {
+                return;
+            }
+
+            if (hasCaughtPlayer || (playerController != null && playerController.HasCompletedLevel))
             {
                 CheckRestartInput();
+                return;
+            }
+
+            CheckPlayerTrackConditions();
+
+            // Settle grace period: gently stick to ground
+            settleTimer += Time.deltaTime;
+            if (settleTimer < SettleGracePeriod)
+            {
+                if (!characterController.isGrounded)
+                {
+                    characterController.Move(Vector3.down * 4f * Time.deltaTime);
+                }
                 return;
             }
 
@@ -129,6 +186,29 @@ namespace VectorParkour
             UpdateVisualFeedback();
             UpdateAnimator();
             CheckCatchCondition();
+            CheckFallOutOfBounds();
+        }
+
+        private void CheckPlayerTrackConditions()
+        {
+            if (targetPlayer == null) return;
+
+            // Player crossed end of 250m track
+            if (targetPlayer.position.z >= 245f)
+            {
+                if (GameManager.Instance != null)
+                {
+                    GameManager.Instance.TriggerGameOver(true);
+                }
+            }
+            // Player fell below track
+            else if (targetPlayer.position.y <= -5f)
+            {
+                if (GameManager.Instance != null)
+                {
+                    GameManager.Instance.TriggerGameOver(false);
+                }
+            }
         }
 
         private void UpdateAI()
@@ -140,43 +220,48 @@ namespace VectorParkour
             float pBaseSpeed = playerController != null ? playerController.BaseSpeed : 9.5f;
             float pCurrentSpeed = playerController != null ? playerController.CurrentSpeed : 9.5f;
 
-            // Target speed based on rubber-banding & player status
-            float targetSpeed = pBaseSpeed;
+            // Manage creep distance over time:
+            // Sprint pushes hunter back; normal running lets hunter creep closer slowly
+            if (playerController != null && playerController.IsSprinting)
+            {
+                creepOffset = Mathf.Max(0f, creepOffset - 2.5f * Time.deltaTime);
+            }
+            else if (playerController != null && !playerController.IsStumbling)
+            {
+                creepOffset = Mathf.Min(3.2f, creepOffset + creepRate * Time.deltaTime);
+            }
 
+            float desiredDistance = Mathf.Max(2.5f, baseFollowDistance - creepOffset);
+
+            float targetSpeed;
             if (playerController != null && playerController.IsStumbling)
             {
-                // Player stumbled! Chaser rushes in aggressively to capitalize
-                targetSpeed = pBaseSpeed * 1.3f;
-            }
-            else if (playerController != null && playerController.IsSprinting)
-            {
-                // Player is sprinting away -> Chaser maintains pursuit without losing track
-                targetSpeed = pBaseSpeed * 1.05f;
+                // Player made a mistake! Hunter picks up pace
+                targetSpeed = pBaseSpeed * 1.15f;
             }
             else
             {
-                // Normal running: Creep closer gradually unless already within dangerous proximity
-                if (distance > 4.5f)
-                {
-                    targetSpeed = pBaseSpeed + creepRate;
-                }
-                else if (distance < 2.0f)
-                {
-                    // Match player closely so player has a small reaction window
-                    targetSpeed = pCurrentSpeed * 0.98f;
-                }
-                else
-                {
-                    targetSpeed = pBaseSpeed + (creepRate * 0.5f);
-                }
+                // Follow comfortably behind without crowding
+                float gapError = distance - desiredDistance;
+                targetSpeed = pCurrentSpeed + (gapError * 0.5f);
+                targetSpeed = Mathf.Clamp(targetSpeed, 0f, pBaseSpeed * 1.05f);
+            }
+
+            // Never crowd closer than 8 meters
+            if (distance < 8.0f)
+            {
+                targetSpeed = Mathf.Min(targetSpeed, pCurrentSpeed * 0.75f);
             }
 
             currentSpeed = Mathf.MoveTowards(currentSpeed, targetSpeed, rubberBandAccSpeed * Time.deltaTime);
 
             // Autonomous obstacle anticipation & handling
-            DetectAndHandleObstaclesAhead();
+            if (characterController.isGrounded)
+            {
+                DetectAndHandleObstaclesAhead();
+            }
 
-            // Vault interpolation handling
+            // Vault interpolation mode
             if (isVaulting)
             {
                 vaultTimer += Time.deltaTime;
@@ -198,7 +283,7 @@ namespace VectorParkour
                 return;
             }
 
-            // Slide timer handling
+            // Slide duration timer
             if (isSliding)
             {
                 slideTimer -= Time.deltaTime;
@@ -213,11 +298,18 @@ namespace VectorParkour
             // Gravity & Vertical physics
             if (characterController.isGrounded)
             {
-                if (verticalVelocity < 0f) verticalVelocity = -2f;
+                airborneTimer = 0f;
+                if (verticalVelocity <= 0.1f)
+                {
+                    isAIJumping = false;
+                    verticalVelocity = -4f;
+                }
             }
             else
             {
+                airborneTimer += Time.deltaTime;
                 verticalVelocity += gravity * Time.deltaTime;
+                verticalVelocity = Mathf.Max(verticalVelocity, -28f);
             }
 
             Vector3 moveDirection = new Vector3(0f, verticalVelocity, currentSpeed);
@@ -230,7 +322,6 @@ namespace VectorParkour
 
             Vector3 originWaist = transform.position + Vector3.up * 0.7f;
             Vector3 originHead = transform.position + Vector3.up * 1.6f;
-            Vector3 groundCheckAhead = transform.position + Vector3.forward * 2.2f + Vector3.up * 0.3f;
 
             // 1. Check for VaultBlock ahead
             if (Physics.Raycast(originWaist, Vector3.forward, out RaycastHit hitWaist, detectionRange))
@@ -252,10 +343,17 @@ namespace VectorParkour
                 }
             }
 
-            // 3. Check for Gaps in the floor ahead
-            if (characterController.isGrounded && !Physics.Raycast(groundCheckAhead, Vector3.down, 1.5f))
+            // 3. Check for Gaps in floor ahead using dual raycasts
+            Vector3 gapCheck1 = transform.position + Vector3.forward * 1.8f + Vector3.up * 0.3f;
+            Vector3 gapCheck2 = transform.position + Vector3.forward * 2.8f + Vector3.up * 0.3f;
+
+            bool floor1 = Physics.Raycast(gapCheck1, Vector3.down, 2.0f);
+            bool floor2 = Physics.Raycast(gapCheck2, Vector3.down, 2.0f);
+
+            if (!floor1 && !floor2)
             {
-                // Floor ends ahead! Leap across the gap
+                // Leap across gap
+                isAIJumping = true;
                 verticalVelocity = jumpForce;
             }
         }
@@ -268,7 +366,7 @@ namespace VectorParkour
 
             float obstacleTop = obstacle.bounds.max.y;
             vaultPeakY = obstacleTop + 0.35f;
-            vaultTargetZ = obstacle.bounds.max.z + 1.2f;
+            vaultTargetZ = obstacle.bounds.max.z + 1.3f;
             verticalVelocity = 0f;
         }
 
@@ -282,10 +380,15 @@ namespace VectorParkour
 
         private void CheckCatchCondition()
         {
+            // Give a 1.5s grace period on start so player gets moving
+            if (settleTimer < 1.5f) return;
+            if (targetPlayer == null) return;
+
             float horizontalDistance = targetPlayer.position.z - transform.position.z;
             float verticalDiff = Mathf.Abs(targetPlayer.position.y - transform.position.y);
 
-            if (horizontalDistance <= catchDistance && verticalDiff < 1.6f)
+            // Hunter catches player from behind within catch distance
+            if (horizontalDistance <= catchDistance && horizontalDistance >= -0.5f && verticalDiff < 1.5f)
             {
                 TriggerCatch();
             }
@@ -294,7 +397,27 @@ namespace VectorParkour
         private void TriggerCatch()
         {
             hasCaughtPlayer = true;
-            Time.timeScale = 0f;
+            if (GameManager.Instance != null)
+            {
+                GameManager.Instance.TriggerGameOver(false);
+            }
+            else
+            {
+                Time.timeScale = 0f;
+            }
+        }
+
+        private void CheckFallOutOfBounds()
+        {
+            if (transform.position.y < -5f && targetPlayer != null)
+            {
+                // Hunter fell off a gap -> respawn safely 6m behind player
+                characterController.enabled = false;
+                transform.position = new Vector3(0f, targetPlayer.position.y + 0.3f, targetPlayer.position.z - baseFollowDistance);
+                characterController.enabled = true;
+                verticalVelocity = -2f;
+                currentSpeed = playerController != null ? playerController.CurrentSpeed : 9.5f;
+            }
         }
 
         public void ResetChaser()
@@ -302,15 +425,25 @@ namespace VectorParkour
             hasCaughtPlayer = false;
             isVaulting = false;
             isSliding = false;
-            transform.position = new Vector3(0f, 0.1f, -baseFollowDistance);
-            currentSpeed = playerController != null ? playerController.BaseSpeed : 9.5f;
-            verticalVelocity = 0f;
+            creepOffset = 0f;
+
+            characterController.enabled = false;
+            transform.position = new Vector3(0f, 0.5f, -baseFollowDistance);
+            characterController.enabled = true;
+
+            currentSpeed = 0f;
+            verticalVelocity = -4f;
+            settleTimer = 0f;
+            isAIJumping = false;
+            airborneTimer = 0f;
 
             if (characterController != null)
             {
                 characterController.height = originalHeight;
                 characterController.center = originalCenter;
             }
+
+            characterController.Move(Vector3.down * 0.5f);
         }
 
         private void CheckRestartInput()
@@ -339,10 +472,18 @@ namespace VectorParkour
         {
             if (visualRoot == null || visualRoot == transform) return;
 
+            if (animator != null)
+            {
+                visualRoot.localScale = defaultVisualScale;
+                visualRoot.localPosition = defaultVisualLocalPos;
+                visualRoot.localRotation = Quaternion.identity;
+                return;
+            }
+
             if (isSliding)
             {
                 visualRoot.localScale = new Vector3(defaultVisualScale.x, defaultVisualScale.y * 0.5f, defaultVisualScale.z * 1.25f);
-                visualRoot.localPosition = new Vector3(defaultVisualLocalPos.x, -0.45f, defaultVisualLocalPos.z - 0.2f);
+                visualRoot.localPosition = defaultVisualLocalPos;
                 visualRoot.localRotation = Quaternion.Euler(-18f, 0f, 0f);
             }
             else if (isVaulting)
@@ -355,42 +496,55 @@ namespace VectorParkour
             {
                 visualRoot.localScale = defaultVisualScale;
                 visualRoot.localPosition = defaultVisualLocalPos;
-                visualRoot.localRotation = Quaternion.Euler(10f, 0f, 0f); // Relentless hunter forward lean
+                visualRoot.localRotation = Quaternion.Euler(10f, 0f, 0f);
             }
         }
 
         private void UpdateAnimator()
         {
             if (animator == null) return;
+            animator.SetBool("IsJumping", IsJumping);
             animator.SetBool("IsSliding", isSliding);
             animator.SetBool("IsVaulting", isVaulting);
         }
 
+        private GUIStyle caughtTitleStyle;
+        private GUIStyle subStyle;
+        private bool stylesInitialized = false;
+
+        private void InitStyles()
+        {
+            if (stylesInitialized) return;
+            stylesInitialized = true;
+
+            caughtTitleStyle = new GUIStyle(GUI.skin.label)
+            {
+                alignment = TextAnchor.MiddleCenter,
+                fontSize = 36,
+                fontStyle = FontStyle.Bold
+            };
+            caughtTitleStyle.normal.textColor = new Color(1f, 0.2f, 0.2f);
+
+            subStyle = new GUIStyle(GUI.skin.label)
+            {
+                alignment = TextAnchor.MiddleCenter,
+                fontSize = 18,
+                fontStyle = FontStyle.Bold
+            };
+            subStyle.normal.textColor = Color.white;
+        }
+
         private void OnGUI()
         {
-            // Game Over / Caught Screen
+            if (GameManager.Instance != null) return;
+
             if (hasCaughtPlayer)
             {
-                // Screen tint
+                InitStyles();
+
                 GUI.color = new Color(0f, 0f, 0f, 0.75f);
                 GUI.DrawTexture(new Rect(0, 0, Screen.width, Screen.height), Texture2D.whiteTexture);
                 GUI.color = Color.white;
-
-                GUIStyle caughtTitleStyle = new GUIStyle(GUI.skin.label)
-                {
-                    alignment = TextAnchor.MiddleCenter,
-                    fontSize = 36,
-                    fontStyle = FontStyle.Bold
-                };
-                caughtTitleStyle.normal.textColor = new Color(1f, 0.2f, 0.2f);
-
-                GUIStyle subStyle = new GUIStyle(GUI.skin.label)
-                {
-                    alignment = TextAnchor.MiddleCenter,
-                    fontSize = 18,
-                    fontStyle = FontStyle.Bold
-                };
-                subStyle.normal.textColor = Color.white;
 
                 float boxW = 500;
                 float boxH = 200;

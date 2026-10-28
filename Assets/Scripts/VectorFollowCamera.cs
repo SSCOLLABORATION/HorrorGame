@@ -4,9 +4,11 @@ namespace VectorParkour
 {
     /// <summary>
     /// 3D side-angled chase camera inspired by Vector.
-    /// Provides an angled side perspective (Offset X: -6, Y: 3.5, Z: -4, 25 deg Y-angle)
-    /// to clearly display both the player's upcoming obstacles and the Chaser pursuing from behind.
-    /// Uses SmoothDamp with decoupled Y-axis damping, and dynamic FOV based on speed & threat proximity.
+    /// Provides an angled chase perspective positioned close to the runner
+    /// so the player clearly sees character animations, incoming 3D obstacles,
+    /// and the Hunter pursuing from behind.
+    /// Uses rock-solid Z-axis lockstep tracking to eliminate forward/backward stutter,
+    /// smooth Y-damping for grounded jump arcs, and dynamic FOV based on speed & threat proximity.
     /// </summary>
     [RequireComponent(typeof(Camera))]
     public class VectorFollowCamera : MonoBehaviour
@@ -14,25 +16,22 @@ namespace VectorParkour
         [Header("Target Tracking")]
         [SerializeField] private Transform target;
         [SerializeField] private Transform chaser;
-        [SerializeField] private Vector3 offset = new Vector3(-7.2f, 3.8f, -8.5f);
-        [SerializeField] private Vector3 targetEulerAngle = new Vector3(13.0f, 28.0f, 0.0f);
+        [SerializeField] private Vector3 offset = new Vector3(-3.8f, 2.1f, -4.8f);
+        [SerializeField] private Vector3 targetEulerAngle = new Vector3(9.0f, 24.0f, 0.0f);
 
         [Header("Damping Parameters")]
-        [SerializeField] private float smoothTimeXZ = 0.15f;
-        [SerializeField] private float smoothTimeY = 0.35f; // Tighter damping so jumps feel grounded
+        [SerializeField] private float smoothTimeY = 0.2f; // Smooth vertical damping for jumps
 
         [Header("Dynamic FOV")]
-        [SerializeField] private float baseFOV = 60.0f;
-        [SerializeField] private float sprintFOV = 68.0f;
-        [SerializeField] private float threatFOV = 52.0f;
-        [SerializeField] private float threatDistanceThreshold = 2.5f;
-        [SerializeField] private float fovTransitionSpeed = 5.0f;
+        [SerializeField] private float baseFOV = 50.0f;
+        [SerializeField] private float sprintFOV = 56.0f;
+        [SerializeField] private float threatFOV = 46.0f;
+        [SerializeField] private float threatDistanceThreshold = 3.0f;
+        [SerializeField] private float fovTransitionSpeed = 4.0f;
 
         private Camera cam;
         private PlayerParkourController playerController;
-        private float velocityX = 0f;
         private float velocityY = 0f;
-        private float velocityZ = 0f;
 
         public void SetTargets(Transform playerTarget, Transform chaserTarget)
         {
@@ -102,10 +101,14 @@ namespace VectorParkour
             // Desired camera position
             Vector3 targetPos = target.position + offset;
 
-            // Decoupled SmoothDamp: X and Z follow rapidly, Y has tighter damping for grounded jumps
-            float posX = Mathf.SmoothDamp(transform.position.x, targetPos.x, ref velocityX, smoothTimeXZ);
+            // Direct forward Z lockstep: guarantees the player stays locked on screen along the run axis without any micro-stutter
+            float posZ = targetPos.z;
+
+            // Fast, responsive lateral X tracking
+            float posX = targetPos.x;
+
+            // Smooth vertical damping on Y so jumps feel grounded and don't jerk the camera violently
             float posY = Mathf.SmoothDamp(transform.position.y, targetPos.y, ref velocityY, smoothTimeY);
-            float posZ = Mathf.SmoothDamp(transform.position.z, targetPos.z, ref velocityZ, smoothTimeXZ);
 
             transform.position = new Vector3(posX, posY, posZ);
             transform.rotation = Quaternion.Euler(targetEulerAngle);
@@ -119,7 +122,7 @@ namespace VectorParkour
 
             float targetFOV = baseFOV;
 
-            // 1. Sprint burst widens FOV
+            // 1. Sprint burst widens FOV for high-speed rush feel
             if (playerController != null && playerController.IsSprinting)
             {
                 targetFOV = sprintFOV;
@@ -128,7 +131,7 @@ namespace VectorParkour
             else if (chaser != null)
             {
                 float chaserDistance = target.position.z - chaser.position.z;
-                if (chaserDistance <= threatDistanceThreshold)
+                if (chaserDistance <= threatDistanceThreshold && chaserDistance > 0f)
                 {
                     float threatFactor = Mathf.Clamp01(chaserDistance / threatDistanceThreshold);
                     targetFOV = Mathf.Lerp(threatFOV, baseFOV, threatFactor);
