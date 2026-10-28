@@ -10,7 +10,7 @@ namespace VectorParkour
     /// </summary>
     public class FinishLine : MonoBehaviour
     {
-        [Tooltip("Target level index this finish line belongs to (1 or 2).")]
+        [Tooltip("Target level index this finish line belongs to (1 to 4).")]
         [SerializeField] private int targetLevelIndex = 1;
 
         public int TargetLevelIndex
@@ -21,7 +21,7 @@ namespace VectorParkour
 
         private bool hasTriggered = false;
 
-        private void OnTriggerEnter(Collider other)
+        public void OnTriggerEnter(Collider other)
         {
             if (hasTriggered || other.isTrigger) return;
 

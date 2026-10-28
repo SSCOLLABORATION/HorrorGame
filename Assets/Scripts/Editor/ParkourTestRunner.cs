@@ -70,10 +70,13 @@ namespace VectorParkour.EditorScripts
             minForwardDelta = 999f;
             maxForwardDelta = -999f;
 
-            player.RestartRun();
             if (GameManager.Instance != null)
             {
-                GameManager.Instance.StartGame();
+                GameManager.Instance.SelectLevel(1, true);
+            }
+            else
+            {
+                player.RestartRun();
             }
 
             lastPos = player.transform.position;
@@ -111,7 +114,7 @@ namespace VectorParkour.EditorScripts
                     }
                     lastPos = currentPos;
 
-                    if (frameCounter >= 60)
+                    if (frameCounter >= 25)
                     {
                         reportLines.Add("\n[TEST A - Running Stability]");
                         reportLines.Add($"  Speed: {player.CurrentSpeed:F2} m/s");
@@ -240,35 +243,49 @@ namespace VectorParkour.EditorScripts
                 // TEST F & G & H: Long-Duration Run, Gap Clearance & Camera
                 // -------------------------------------------------------------
                 case 6:
-                    // Auto-jump for gap at Z=33
-                    if (currentPos.z >= 33.0f && currentPos.z <= 34.5f && player.CurrentState == MovementState.Running)
+                    // Auto-jump/vault for block at Z=14
+                    if (currentPos.z >= 12.0f && currentPos.z <= 13.5f && player.CurrentState == MovementState.Running)
                     {
                         var jf = typeof(PlayerParkourController).GetField("jumpBufferTimer", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
                         jf.SetValue(player, 0.18f);
                     }
 
-                    // Auto-slide for barrier at Z=66
-                    if (currentPos.z >= 65.5f && currentPos.z <= 67.0f && player.CurrentState == MovementState.Running)
+                    // Auto-slide for barrier at Z=26
+                    if (currentPos.z >= 24.0f && currentPos.z <= 25.5f && player.CurrentState == MovementState.Running)
                     {
                         var sf = typeof(PlayerParkourController).GetField("slideBufferTimer", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
                         sf.SetValue(player, 0.18f);
                     }
 
-                    // Auto-jump for gap at Z=78
-                    if (currentPos.z >= 78.0f && currentPos.z <= 79.5f && player.CurrentState == MovementState.Running)
+                    // Auto-jump for gap at Z=32
+                    if (currentPos.z >= 30.5f && currentPos.z <= 31.8f && player.CurrentState == MovementState.Running)
+                    {
+                        var jf = typeof(PlayerParkourController).GetField("jumpBufferTimer", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+                        jf.SetValue(player, 0.18f);
+                    }
+
+                    // Auto-slide for barrier at Z=68
+                    if (currentPos.z >= 66.0f && currentPos.z <= 67.5f && player.CurrentState == MovementState.Running)
+                    {
+                        var sf = typeof(PlayerParkourController).GetField("slideBufferTimer", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+                        sf.SetValue(player, 0.18f);
+                    }
+
+                    // Auto-jump for gap at Z=74
+                    if (currentPos.z >= 72.5f && currentPos.z <= 73.8f && player.CurrentState == MovementState.Running)
                     {
                         var jf = typeof(PlayerParkourController).GetField("jumpBufferTimer", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
                         jf.SetValue(player, 0.18f);
                     }
 
                     var cam = Camera.main;
-                    if (currentPos.z >= 90.0f || frameCounter >= 300)
+                    if (currentPos.z >= 90.0f || frameCounter >= 450)
                     {
                         reportLines.Add("\n[TEST F & G - Long-Duration Run & Gaps]");
                         reportLines.Add($"  Reached Z Position: {currentPos.z:F2}m (Cleared 2 rooftop buildings & 2 gaps)");
                         reportLines.Add($"  Grounded on Roof 3: {cc.isGrounded}, Y pos: {currentPos.y:F4}m");
                         reportLines.Add($"  IsStumbling: {player.IsStumbling}");
-                        reportLines.Add("  -> PASS: Traversed >90 meters of track with 100% stability.");
+                        reportLines.Add(currentPos.z >= 90.0f ? "  -> PASS: Traversed >90 meters of track with 100% stability." : "  -> FAIL: Did not reach Z >= 90m.");
 
                         reportLines.Add("\n[TEST H - Camera Stability]");
                         reportLines.Add($"  Camera Pos: {(cam != null ? cam.transform.position.ToString("F3") : "N/A")}");

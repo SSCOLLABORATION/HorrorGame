@@ -97,7 +97,7 @@ namespace VectorParkour
                 }
             }
 
-            if (visualRoot == null)
+            if (visualRoot == null || visualRoot == transform)
             {
                 Transform foundVisual = transform.Find("Visual");
                 visualRoot = foundVisual != null ? foundVisual : transform;
@@ -494,6 +494,13 @@ namespace VectorParkour
             }
 
             transform.position = spawnPoint;
+            transform.rotation = Quaternion.identity;
+            if (visualRoot != null && visualRoot != transform)
+            {
+                visualRoot.localRotation = Quaternion.identity;
+                visualRoot.localScale = defaultVisualScale;
+                visualRoot.localPosition = defaultVisualLocalPos;
+            }
 
             if (characterController != null)
             {

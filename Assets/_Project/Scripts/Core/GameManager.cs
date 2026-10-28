@@ -298,32 +298,47 @@ namespace Vector3D.Core
 
         private void EnsureLevelRoots()
         {
+            GameObject parkourLevel = GameObject.Find("ParkourLevel");
+            Transform parkourTransform = parkourLevel != null ? parkourLevel.transform : null;
+
             if (_level1Root == null)
             {
-                GameObject go = GameObject.Find("ParkourLevel/Level 1");
-                if (go == null) go = GameObject.Find("Level 1");
-                _level1Root = go;
+                if (parkourTransform != null)
+                {
+                    Transform t = parkourTransform.Find("Level 1");
+                    if (t != null) _level1Root = t.gameObject;
+                }
+                if (_level1Root == null) _level1Root = GameObject.Find("Level 1");
             }
 
             if (_level2Root == null)
             {
-                GameObject go = GameObject.Find("ParkourLevel/Level 2");
-                if (go == null) go = GameObject.Find("Level 2");
-                _level2Root = go;
+                if (parkourTransform != null)
+                {
+                    Transform t = parkourTransform.Find("Level 2");
+                    if (t != null) _level2Root = t.gameObject;
+                }
+                if (_level2Root == null) _level2Root = GameObject.Find("Level 2");
             }
 
             if (_level3Root == null)
             {
-                GameObject go = GameObject.Find("ParkourLevel/Level 3");
-                if (go == null) go = GameObject.Find("Level 3");
-                _level3Root = go;
+                if (parkourTransform != null)
+                {
+                    Transform t = parkourTransform.Find("Level 3");
+                    if (t != null) _level3Root = t.gameObject;
+                }
+                if (_level3Root == null) _level3Root = GameObject.Find("Level 3");
             }
 
             if (_level4Root == null)
             {
-                GameObject go = GameObject.Find("ParkourLevel/Level 4");
-                if (go == null) go = GameObject.Find("Level 4");
-                _level4Root = go;
+                if (parkourTransform != null)
+                {
+                    Transform t = parkourTransform.Find("Level 4");
+                    if (t != null) _level4Root = t.gameObject;
+                }
+                if (_level4Root == null) _level4Root = GameObject.Find("Level 4");
             }
         }
 

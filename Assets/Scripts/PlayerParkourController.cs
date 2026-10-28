@@ -315,7 +315,7 @@ namespace VectorParkour
                 slidingCenter = new Vector3(standingCenter.x, groundY + (slidingHeight * 0.5f), standingCenter.z);
             }
 
-            if (visualRoot == null)
+            if (visualRoot == null || visualRoot == transform)
             {
                 Transform foundVisual = transform.Find("Visual");
                 visualRoot = foundVisual != null ? foundVisual : transform;
@@ -1325,6 +1325,28 @@ namespace VectorParkour
         {
             if (other.CompareTag("Finish"))
             {
+                if (GameManager.Instance != null && GameManager.Instance.CurrentState != GameState.Playing)
+                {
+                    return;
+                }
+
+                FinishLine finishLine = other.GetComponent<FinishLine>();
+                if (finishLine != null)
+                {
+                    if (GameManager.Instance != null && GameManager.Instance.CurrentLevelIndex != finishLine.TargetLevelIndex)
+                    {
+                        return;
+                    }
+                }
+                else if (GameManager.Instance != null)
+                {
+                    int gateLevel = other.transform.position.x > 250f ? 4 : (other.transform.position.x > 150f ? 3 : (other.transform.position.x > 50f ? 2 : 1));
+                    if (GameManager.Instance.CurrentLevelIndex != gateLevel)
+                    {
+                        return;
+                    }
+                }
+
                 if (Mathf.Abs(other.transform.position.x - transform.position.x) < 5.0f)
                 {
                     ReachFinishLine();
@@ -1494,6 +1516,7 @@ namespace VectorParkour
             }
 
             transform.position = spawnPoint;
+            transform.rotation = Quaternion.identity;
 
             if (characterController != null)
             {

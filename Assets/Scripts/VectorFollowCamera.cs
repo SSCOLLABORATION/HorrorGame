@@ -148,6 +148,9 @@ namespace VectorParkour
 
             transform.position = target.position + currentOffset;
             transform.rotation = Quaternion.Euler(currentEulerAngle);
+
+            if (cam == null) cam = GetComponent<Camera>();
+            if (cam != null) cam.fieldOfView = baseFOV;
         }
 
         private bool IsDefaultViewObstructed()

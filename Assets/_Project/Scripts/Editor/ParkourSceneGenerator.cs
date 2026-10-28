@@ -569,6 +569,10 @@ namespace Vector3D.EditorScripts
             trigger.center = new Vector3(0f, 2.0f, 0f);
             trigger.size = new Vector3(6.0f, 5.0f, 2.0f);
             goalRoot.tag = "Finish";
+
+            Rigidbody rb = goalRoot.AddComponent<Rigidbody>();
+            rb.isKinematic = true;
+
             FinishLine fl = goalRoot.AddComponent<FinishLine>();
             fl.TargetLevelIndex = trackX > 250f ? 4 : (trackX > 150f ? 3 : (trackX > 50f ? 2 : 1));
         }
@@ -638,6 +642,11 @@ namespace Vector3D.EditorScripts
                 if (gravProp != null) gravProp.floatValue = -14.0f;
                 var rangeProp = pSo.FindProperty("wallDetectionRange");
                 if (rangeProp != null) rangeProp.floatValue = 2.85f;
+                var finishZProp = pSo.FindProperty("finishZ");
+                if (finishZProp != null) finishZProp.floatValue = 246.0f;
+                var vrProp = pSo.FindProperty("visualRoot");
+                Transform visual = playerGo.transform.Find("Visual");
+                if (vrProp != null && visual != null) vrProp.objectReferenceValue = visual;
                 pSo.ApplyModifiedProperties();
             }
 
@@ -671,6 +680,18 @@ namespace Vector3D.EditorScripts
 
                 InstantiateDummyPrefab("HumanDummy_M Red", chaserGo.transform, new Color(1.0f, 0.2f, 0.2f));
                 chaserGo.AddComponent<ChaserAI>();
+            }
+
+            ChaserAI ai = chaserGo.GetComponent<ChaserAI>();
+            if (ai != null)
+            {
+                SerializedObject cSo = new SerializedObject(ai);
+                var targetProp = cSo.FindProperty("targetPlayer");
+                if (targetProp != null) targetProp.objectReferenceValue = playerTransform;
+                var vrProp = cSo.FindProperty("visualRoot");
+                Transform visual = chaserGo.transform.Find("Visual");
+                if (vrProp != null && visual != null) vrProp.objectReferenceValue = visual;
+                cSo.ApplyModifiedProperties();
             }
 
             return chaserGo;
