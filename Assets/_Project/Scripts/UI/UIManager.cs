@@ -8,8 +8,9 @@ namespace Vector3D.UI
     /// Manages the UI overlay screens:
     /// - Start Screen (Play, Level Select, Quit)
     /// - Level Select Screen (Sector 1, Sector 2, Back)
-    /// - End Game Screen (Restart, Next Level, Quit)
-    /// Subscribes to GameManager state updates and routes button clicks to GameManager actions.
+    /// - End Game Screen (Next Level, Level Select, Restart, Quit)
+    /// Subscribes to GameManager state updates, plays UI audio feedback,
+    /// and routes button clicks to GameManager actions.
     /// </summary>
     public class UIManager : MonoBehaviour
     {
@@ -31,12 +32,19 @@ namespace Vector3D.UI
         [Header("End Game Buttons")]
         [SerializeField] private Button _restartButton;
         [SerializeField] private Button _nextLevelButton;
+        [SerializeField] private Button _endLevelSelectButton;
         [SerializeField] private Button _endQuitButton;
 
         [Header("Status Feedback")]
         [SerializeField] private Text _statusHeaderText;
         [SerializeField] private Text _statusSubText;
         [SerializeField] private Text _currentLevelLabel;
+
+        [Header("Audio Feedback")]
+        [SerializeField] private AudioSource _fallbackSfxSource;
+        [SerializeField] private AudioClip _buttonClickClip;
+
+        private bool _cameFromGameOver = false;
 
         private void Awake()
         {
@@ -86,6 +94,12 @@ namespace Vector3D.UI
             {
                 _nextLevelButton.onClick.RemoveAllListeners();
                 _nextLevelButton.onClick.AddListener(OnNextLevelClicked);
+            }
+
+            if (_endLevelSelectButton != null)
+            {
+                _endLevelSelectButton.onClick.RemoveAllListeners();
+                _endLevelSelectButton.onClick.AddListener(OnEndLevelSelectClicked);
             }
 
             if (_endQuitButton != null)
@@ -141,6 +155,11 @@ namespace Vector3D.UI
         private void HandleGameOver(bool won)
         {
             int currentLevel = GameManager.Instance != null ? GameManager.Instance.CurrentLevelIndex : 1;
+
+            if (_endLevelSelectButton != null)
+            {
+                _endLevelSelectButton.gameObject.SetActive(true);
+            }
 
             if (won)
             {
@@ -223,13 +242,28 @@ namespace Vector3D.UI
             }
         }
 
+        public void PlayButtonClick()
+        {
+            if (AudioManager.Instance != null)
+            {
+                AudioManager.Instance.PlayButtonClick();
+            }
+            else if (_fallbackSfxSource != null && _buttonClickClip != null)
+            {
+                _fallbackSfxSource.PlayOneShot(_buttonClickClip);
+            }
+        }
+
         private void OnPlayClicked()
         {
+            PlayButtonClick();
             GameManager.Instance?.StartGame();
         }
 
         private void OnLevelSelectClicked()
         {
+            PlayButtonClick();
+            _cameFromGameOver = false;
             if (_startScreenPanel != null)
             {
                 _startScreenPanel.SetActive(false);
@@ -241,24 +275,60 @@ namespace Vector3D.UI
             }
         }
 
+        private void OnEndLevelSelectClicked()
+        {
+            PlayButtonClick();
+            _cameFromGameOver = true;
+            if (_endScreenPanel != null)
+            {
+                _endScreenPanel.SetActive(false);
+            }
+
+            if (_levelSelectPanel != null)
+            {
+                _levelSelectPanel.SetActive(true);
+            }
+        }
+
         private void OnLevelSelectBackClicked()
         {
+            PlayButtonClick();
             if (_levelSelectPanel != null)
             {
                 _levelSelectPanel.SetActive(false);
             }
 
-            if (_startScreenPanel != null)
+            if (_cameFromGameOver)
             {
-                _startScreenPanel.SetActive(true);
+                if (_endScreenPanel != null)
+                {
+                    _endScreenPanel.SetActive(true);
+                }
+            }
+            else
+            {
+                if (_startScreenPanel != null)
+                {
+                    _startScreenPanel.SetActive(true);
+                }
             }
         }
 
         private void OnLevelChosen(int levelIndex)
         {
+            PlayButtonClick();
+            _cameFromGameOver = false;
             if (_levelSelectPanel != null)
             {
                 _levelSelectPanel.SetActive(false);
+            }
+            if (_endScreenPanel != null)
+            {
+                _endScreenPanel.SetActive(false);
+            }
+            if (_startScreenPanel != null)
+            {
+                _startScreenPanel.SetActive(false);
             }
 
             GameManager.Instance?.SelectLevel(levelIndex, startPlaying: true);
@@ -266,16 +336,19 @@ namespace Vector3D.UI
 
         private void OnRestartClicked()
         {
+            PlayButtonClick();
             GameManager.Instance?.RestartGame();
         }
 
         private void OnNextLevelClicked()
         {
+            PlayButtonClick();
             GameManager.Instance?.StartNextLevel();
         }
 
         private void OnQuitClicked()
         {
+            PlayButtonClick();
             GameManager.Instance?.QuitGame();
         }
     }

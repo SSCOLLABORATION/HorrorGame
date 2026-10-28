@@ -113,6 +113,11 @@ namespace Vector3D.Core
             IsGameWon = won;
             SetState(GameState.GameOver);
             OnGameOver?.Invoke(won);
+
+            if (!won)
+            {
+                AudioManager.Instance?.PlayDeathSound();
+            }
         }
 
         /// <summary>

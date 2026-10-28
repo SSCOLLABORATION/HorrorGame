@@ -95,15 +95,18 @@ namespace Vector3D.EditorScripts
             // 12. Setup Follow Camera
             EnsureCamera(player.transform, chaser.transform);
 
-            // 13. Build Full Single-Scene UI Canvas Overlay System (with NextLevelButton)
+            // 13. Setup Audio Manager (BGM and SFX)
+            SetupAudioManager();
+
+            // 14. Build Full Single-Scene UI Canvas Overlay System (with Level Select & NextLevelButton)
             BuildUISystem();
 
-            // 13. Mark Dirty and Save Scene
+            // 15. Mark Dirty and Save Scene
             var activeScene = EditorSceneManager.GetActiveScene();
             EditorSceneManager.MarkSceneDirty(activeScene);
             EditorSceneManager.SaveScene(activeScene);
 
-            Debug.Log("<color=green>[Vector3D]</color> Multi-Level Scene (Level 1 & Level 2) generated and saved successfully!");
+            Debug.Log("<color=green>[Vector3D]</color> Multi-Level Scene (Level 1 & Level 2) with Audio System generated and saved successfully!");
         }
 
         #region Level 1 Construction (X = 0f)
@@ -666,35 +669,87 @@ namespace Vector3D.EditorScripts
             startRect.offsetMax = Vector2.zero;
 
             Image startImage = startPanel.GetComponent<Image>();
-            startImage.color = new Color(0.05f, 0.05f, 0.08f, 0.85f);
+            Sprite bgSprite = GetOrCreateBackgroundSprite();
+            if (bgSprite != null)
+            {
+                startImage.sprite = bgSprite;
+                startImage.color = Color.white;
+            }
+            else
+            {
+                startImage.color = new Color(0.05f, 0.05f, 0.08f, 0.85f);
+            }
 
-            CreateText("TitleText", startPanel.transform, "VECTOR 3D", 82, FontStyle.Bold,
+            // Left Menu Container Card (positioned over the left atmospheric region, leaving track artwork visible)
+            GameObject leftCard = new GameObject("LeftMenuCard", typeof(RectTransform), typeof(Image));
+            leftCard.transform.SetParent(startPanel.transform, false);
+            RectTransform cardRect = leftCard.GetComponent<RectTransform>();
+            cardRect.anchorMin = new Vector2(0f, 0.5f);
+            cardRect.anchorMax = new Vector2(0f, 0.5f);
+            cardRect.pivot = new Vector2(0.5f, 0.5f);
+            cardRect.anchoredPosition = new Vector2(360f, 0f);
+            cardRect.sizeDelta = new Vector2(540f, 780f);
+
+            Image cardImg = leftCard.GetComponent<Image>();
+            cardImg.color = new Color(0.03f, 0.05f, 0.09f, 0.82f);
+
+            // Glowing top accent bar
+            CreateAccentBar("TopAccentBar", leftCard.transform, new Color(0.2f, 0.85f, 1f, 0.9f), new Vector2(0f, 370f), new Vector2(480f, 4f));
+
+            // Title & Subtitle inside Left Card
+            CreateText("TitleText", leftCard.transform, "VECTOR 3D", 64, FontStyle.Bold,
                 Color.white, TextAnchor.MiddleCenter,
-                new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(0f, 175f), new Vector2(900f, 120f), builtinFont);
+                new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(0f, 305f), new Vector2(480f, 80f), builtinFont);
 
-            CreateText("SubtitleText", startPanel.transform, "ROOFTOP PURSUIT // OUTRUN THE ENFORCER", 22, FontStyle.Normal,
-                new Color(0.6f, 0.8f, 1f, 0.9f), TextAnchor.MiddleCenter,
-                new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(0f, 105f), new Vector2(800f, 40f), builtinFont);
+            CreateText("SubtitleText", leftCard.transform, "ROOFTOP PURSUIT // OUTRUN THE ENFORCER", 17, FontStyle.Normal,
+                new Color(0.5f, 0.82f, 1f, 0.95f), TextAnchor.MiddleCenter,
+                new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(0f, 255f), new Vector2(480f, 32f), builtinFont);
 
-            CreateText("ControlsHint", startPanel.transform, "[W / UP] Jump & Wall-Run   |   [S / DOWN] Slide   |   [D / RIGHT] Sprint", 18, FontStyle.Normal,
-                new Color(0.7f, 0.75f, 0.8f, 0.8f), TextAnchor.MiddleCenter,
-                new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(0f, 50f), new Vector2(800f, 35f), builtinFont);
+            // Active Sector indicator
+            Text currentLevelLabel = CreateText("CurrentLevelLabel", leftCard.transform, "ACTIVE SECTOR: 01", 17, FontStyle.Bold,
+                new Color(0.2f, 0.95f, 1f, 1f), TextAnchor.MiddleCenter,
+                new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(0f, 205f), new Vector2(380f, 32f), builtinFont);
 
-            Text currentLevelLabel = CreateText("CurrentLevelLabel", startPanel.transform, "ACTIVE SECTOR: 01", 18, FontStyle.Bold,
-                new Color(0.2f, 0.9f, 1f, 0.9f), TextAnchor.MiddleCenter,
-                new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(0f, 5f), new Vector2(400f, 30f), builtinFont);
+            CreateAccentBar("Divider1", leftCard.transform, new Color(0.3f, 0.45f, 0.6f, 0.35f), new Vector2(0f, 170f), new Vector2(440f, 2f));
 
-            Button playButton = CreateButton("PlayButton", startPanel.transform, "PLAY RUN", 26,
+            // Main Menu Action Buttons inside Left Card
+            Button playButton = CreateButton("PlayButton", leftCard.transform, "PLAY RUN", 26,
                 new Color(0.12f, 0.55f, 0.95f, 1f), Color.white,
-                new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(0f, -50f), new Vector2(320f, 58f), builtinFont);
+                new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(0f, 110f), new Vector2(400f, 62f), builtinFont);
 
-            Button levelSelectButton = CreateButton("LevelSelectButton", startPanel.transform, "SELECT LEVEL", 22,
+            Button levelSelectButton = CreateButton("LevelSelectButton", leftCard.transform, "SELECT LEVEL", 22,
                 new Color(0.15f, 0.38f, 0.55f, 0.95f), new Color(0.9f, 0.95f, 1f, 1f),
-                new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(0f, -120f), new Vector2(320f, 54f), builtinFont);
+                new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(0f, 35f), new Vector2(400f, 56f), builtinFont);
 
-            Button startQuitButton = CreateButton("QuitButton", startPanel.transform, "QUIT", 20,
-                new Color(0.2f, 0.2f, 0.25f, 0.95f), new Color(0.85f, 0.85f, 0.85f, 1f),
-                new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(0f, -185f), new Vector2(320f, 48f), builtinFont);
+            Button startQuitButton = CreateButton("QuitButton", leftCard.transform, "QUIT", 20,
+                new Color(0.22f, 0.22f, 0.28f, 0.95f), new Color(0.85f, 0.85f, 0.85f, 1f),
+                new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(0f, -35f), new Vector2(400f, 50f), builtinFont);
+
+            CreateAccentBar("Divider2", leftCard.transform, new Color(0.3f, 0.45f, 0.6f, 0.35f), new Vector2(0f, -90f), new Vector2(440f, 2f));
+
+            // Tactical Controls guide inside Left Card
+            CreateText("ControlsHeader", leftCard.transform, "TACTICAL CONTROLS", 16, FontStyle.Bold,
+                new Color(0.4f, 0.85f, 1f, 0.95f), TextAnchor.MiddleCenter,
+                new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(0f, -120f), new Vector2(460f, 26f), builtinFont);
+
+            CreateText("ControlsLine1", leftCard.transform, "[W / Space] Jump / Vault    |    [S] Slide / Dive", 15, FontStyle.Normal,
+                new Color(0.88f, 0.92f, 0.98f, 0.95f), TextAnchor.MiddleCenter,
+                new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(0f, -155f), new Vector2(460f, 26f), builtinFont);
+
+            CreateText("ControlsLine2", leftCard.transform, "[A] Left Wall-Run    |    [D] Right Wall-Run", 15, FontStyle.Normal,
+                new Color(0.88f, 0.92f, 0.98f, 0.95f), TextAnchor.MiddleCenter,
+                new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(0f, -190f), new Vector2(460f, 26f), builtinFont);
+
+            CreateText("ControlsLine3", leftCard.transform, "[Shift] Sprint Boost (1.4x Speed Burst)", 15, FontStyle.Normal,
+                new Color(0.88f, 0.92f, 0.98f, 0.95f), TextAnchor.MiddleCenter,
+                new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(0f, -225f), new Vector2(460f, 26f), builtinFont);
+
+            CreateText("ControlsLine4", leftCard.transform, "Auto-Run Active // Press A/D to lock onto glowing walls", 13, FontStyle.Italic,
+                new Color(0.35f, 0.95f, 0.85f, 0.85f), TextAnchor.MiddleCenter,
+                new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(0f, -260f), new Vector2(460f, 24f), builtinFont);
+
+            // Bottom accent bar
+            CreateAccentBar("BottomAccentBar", leftCard.transform, new Color(0.2f, 0.85f, 1f, 0.5f), new Vector2(0f, -370f), new Vector2(480f, 3f));
 
             startPanel.SetActive(true);
 
@@ -738,7 +793,7 @@ namespace Vector3D.EditorScripts
 
             levelSelectPanel.SetActive(false);
 
-            // 3. END GAME PANEL (Popup Card 600x420)
+            // 3. END GAME PANEL (Popup Card 620x490)
             GameObject endPanel = new GameObject("EndScreenPanel", typeof(RectTransform), typeof(Image));
             endPanel.transform.SetParent(canvasGo.transform, false);
             RectTransform endRect = endPanel.GetComponent<RectTransform>();
@@ -746,34 +801,57 @@ namespace Vector3D.EditorScripts
             endRect.anchorMax = new Vector2(0.5f, 0.5f);
             endRect.pivot = new Vector2(0.5f, 0.5f);
             endRect.anchoredPosition = Vector2.zero;
-            endRect.sizeDelta = new Vector2(600f, 420f);
+            endRect.sizeDelta = new Vector2(620f, 490f);
 
             Image endImage = endPanel.GetComponent<Image>();
             endImage.color = new Color(0.08f, 0.08f, 0.12f, 0.96f);
 
             Text statusHeaderText = CreateText("StatusHeader", endPanel.transform, "CAUGHT BY HUNTER", 36, FontStyle.Bold,
                 new Color(1f, 0.25f, 0.25f, 1f), TextAnchor.MiddleCenter,
-                new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(0f, 130f), new Vector2(560f, 65f), builtinFont);
+                new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(0f, 175f), new Vector2(560f, 65f), builtinFont);
 
             Text statusSubText = CreateText("StatusSub", endPanel.transform, "The enforcer terminated your rooftop run.", 17, FontStyle.Normal,
                 new Color(0.7f, 0.72f, 0.78f, 0.85f), TextAnchor.MiddleCenter,
-                new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(0f, 80f), new Vector2(520f, 35f), builtinFont);
+                new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(0f, 125f), new Vector2(520f, 35f), builtinFont);
+
+            // Button Container with VerticalLayoutGroup for dynamic stacking
+            GameObject buttonContainer = new GameObject("ButtonsContainer", typeof(RectTransform), typeof(VerticalLayoutGroup));
+            buttonContainer.transform.SetParent(endPanel.transform, false);
+            RectTransform containerRect = buttonContainer.GetComponent<RectTransform>();
+            containerRect.anchorMin = new Vector2(0.5f, 0.5f);
+            containerRect.anchorMax = new Vector2(0.5f, 0.5f);
+            containerRect.pivot = new Vector2(0.5f, 0.5f);
+            containerRect.anchoredPosition = new Vector2(0f, -45f);
+            containerRect.sizeDelta = new Vector2(340f, 270f);
+
+            VerticalLayoutGroup vlg = buttonContainer.GetComponent<VerticalLayoutGroup>();
+            vlg.childAlignment = TextAnchor.MiddleCenter;
+            vlg.spacing = 10f;
+            vlg.childControlWidth = false;
+            vlg.childControlHeight = false;
+            vlg.childForceExpandWidth = false;
+            vlg.childForceExpandHeight = false;
 
             // Next Level Button (shown only on Level 1 Win)
-            Button nextLevelButton = CreateButton("NextLevelButton", endPanel.transform, "NEXT LEVEL", 26,
+            Button nextLevelButton = CreateButton("NextLevelButton", buttonContainer.transform, "NEXT LEVEL", 24,
                 new Color(0.1f, 0.8f, 0.4f, 1f), Color.white,
-                new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(0f, 10f), new Vector2(280f, 55f), builtinFont);
+                new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(300f, 50f), builtinFont);
             nextLevelButton.gameObject.SetActive(false);
 
+            // Select Level Button on End Game Screen (Available on finish line win and game over)
+            Button endLevelSelectButton = CreateButton("EndLevelSelectButton", buttonContainer.transform, "SELECT LEVEL", 22,
+                new Color(0.15f, 0.38f, 0.55f, 0.95f), new Color(0.9f, 0.95f, 1f, 1f),
+                new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(300f, 50f), builtinFont);
+
             // Restart Button
-            Button restartButton = CreateButton("RestartButton", endPanel.transform, "RESTART RUN", 24,
+            Button restartButton = CreateButton("RestartButton", buttonContainer.transform, "RESTART RUN", 22,
                 new Color(0.12f, 0.55f, 0.95f, 1f), Color.white,
-                new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(0f, -55f), new Vector2(280f, 55f), builtinFont);
+                new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(300f, 50f), builtinFont);
 
             // End Quit Button
-            Button endQuitButton = CreateButton("QuitButton", endPanel.transform, "QUIT", 20,
+            Button endQuitButton = CreateButton("QuitButton", buttonContainer.transform, "QUIT", 20,
                 new Color(0.2f, 0.2f, 0.25f, 0.95f), new Color(0.85f, 0.85f, 0.85f, 1f),
-                new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(0f, -120f), new Vector2(280f, 48f), builtinFont);
+                new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(300f, 44f), builtinFont);
 
             endPanel.SetActive(false);
 
@@ -794,6 +872,9 @@ namespace Vector3D.EditorScripts
             SerializedProperty nextProp = so.FindProperty("_nextLevelButton");
             if (nextProp != null) nextProp.objectReferenceValue = nextLevelButton;
 
+            SerializedProperty endLevelProp = so.FindProperty("_endLevelSelectButton");
+            if (endLevelProp != null) endLevelProp.objectReferenceValue = endLevelSelectButton;
+
             SerializedProperty statusProp = so.FindProperty("_statusHeaderText");
             if (statusProp != null) statusProp.objectReferenceValue = statusHeaderText;
 
@@ -803,6 +884,83 @@ namespace Vector3D.EditorScripts
             SerializedProperty levelLabelProp = so.FindProperty("_currentLevelLabel");
             if (levelLabelProp != null) levelLabelProp.objectReferenceValue = currentLevelLabel;
 
+            AudioClip clickClip = AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/sOUNDS/menu button click sound.mp3");
+            if (clickClip == null) clickClip = AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Sounds/menu button click sound.mp3");
+            if (clickClip != null)
+            {
+                SerializedProperty clickProp = so.FindProperty("_buttonClickClip");
+                if (clickProp != null) clickProp.objectReferenceValue = clickClip;
+            }
+
+            so.ApplyModifiedProperties();
+        }
+
+        private static void SetupAudioManager()
+        {
+            GameObject audioManagerGo = GameObject.Find("AudioManager");
+            if (audioManagerGo == null)
+            {
+                audioManagerGo = new GameObject("AudioManager");
+                Undo.RegisterCreatedObjectUndo(audioManagerGo, "Create AudioManager");
+            }
+
+            AudioManager audioManager = audioManagerGo.GetComponent<AudioManager>();
+            if (audioManager == null)
+            {
+                audioManager = audioManagerGo.AddComponent<AudioManager>();
+            }
+
+            AudioSource[] sources = audioManagerGo.GetComponents<AudioSource>();
+            AudioSource musicSource = sources.Length > 0 ? sources[0] : audioManagerGo.AddComponent<AudioSource>();
+            AudioSource sfxSource = sources.Length > 1 ? sources[1] : audioManagerGo.AddComponent<AudioSource>();
+
+            // Find Audio Clips
+            AudioClip bgmClip = AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/sOUNDS/Background music.mp3");
+            if (bgmClip == null) bgmClip = AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Sounds/Background music.mp3");
+            if (bgmClip == null)
+            {
+                string[] guids = AssetDatabase.FindAssets("t:AudioClip Background music");
+                if (guids.Length > 0) bgmClip = AssetDatabase.LoadAssetAtPath<AudioClip>(AssetDatabase.GUIDToAssetPath(guids[0]));
+            }
+
+            AudioClip clickClip = AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/sOUNDS/menu button click sound.mp3");
+            if (clickClip == null) clickClip = AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Sounds/menu button click sound.mp3");
+            if (clickClip == null)
+            {
+                string[] guids = AssetDatabase.FindAssets("t:AudioClip menu button click");
+                if (guids.Length > 0) clickClip = AssetDatabase.LoadAssetAtPath<AudioClip>(AssetDatabase.GUIDToAssetPath(guids[0]));
+            }
+
+            AudioClip deathClip = AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/sOUNDS/Death sound.mp3");
+            if (deathClip == null) deathClip = AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Sounds/Death sound.mp3");
+            if (deathClip == null)
+            {
+                string[] guids = AssetDatabase.FindAssets("t:AudioClip Death sound");
+                if (guids.Length > 0) deathClip = AssetDatabase.LoadAssetAtPath<AudioClip>(AssetDatabase.GUIDToAssetPath(guids[0]));
+            }
+
+            musicSource.playOnAwake = true;
+            musicSource.loop = true;
+            musicSource.spatialBlend = 0f; // Pure 2D stereo
+            musicSource.ignoreListenerPause = true;
+            musicSource.volume = 0.5f;
+            if (bgmClip != null)
+            {
+                musicSource.clip = bgmClip;
+            }
+
+            sfxSource.playOnAwake = false;
+            sfxSource.loop = false;
+            sfxSource.spatialBlend = 0f; // Pure 2D stereo
+            sfxSource.ignoreListenerPause = true;
+            sfxSource.volume = 0.85f;
+
+            SerializedObject so = new SerializedObject(audioManager);
+            so.FindProperty("_musicSource").objectReferenceValue = musicSource;
+            so.FindProperty("_sfxSource").objectReferenceValue = sfxSource;
+            if (bgmClip != null) so.FindProperty("_bgmClip").objectReferenceValue = bgmClip;
+            if (deathClip != null) so.FindProperty("_deathClip").objectReferenceValue = deathClip;
+            if (clickClip != null) so.FindProperty("_buttonClickClip").objectReferenceValue = clickClip;
             so.ApplyModifiedProperties();
         }
 
@@ -900,10 +1058,63 @@ namespace Vector3D.EditorScripts
             colors.selectedColor = normalColor;
             btn.colors = colors;
 
+            LayoutElement le = btnGo.AddComponent<LayoutElement>();
+            le.preferredWidth = sizeDelta.x;
+            le.preferredHeight = sizeDelta.y;
+
             CreateText("Label", btnGo.transform, label, fontSize, FontStyle.Bold, textColor, TextAnchor.MiddleCenter,
                 Vector2.zero, Vector2.one, Vector2.zero, Vector2.zero, font);
 
             return btn;
+        }
+
+        private static GameObject CreateAccentBar(string name, Transform parent, Color color, Vector2 anchoredPos, Vector2 sizeDelta)
+        {
+            GameObject barGo = new GameObject(name, typeof(RectTransform), typeof(Image));
+            barGo.transform.SetParent(parent, false);
+
+            RectTransform rect = barGo.GetComponent<RectTransform>();
+            rect.anchorMin = new Vector2(0.5f, 0.5f);
+            rect.anchorMax = new Vector2(0.5f, 0.5f);
+            rect.anchoredPosition = anchoredPos;
+            rect.sizeDelta = sizeDelta;
+
+            Image img = barGo.GetComponent<Image>();
+            img.color = color;
+            img.raycastTarget = false;
+
+            return barGo;
+        }
+
+        private static Sprite GetOrCreateBackgroundSprite()
+        {
+            string path = "Assets/_Project/Textures/MainMenuBackground.png";
+            TextureImporter importer = AssetImporter.GetAtPath(path) as TextureImporter;
+            if (importer != null)
+            {
+                bool reimport = false;
+                if (importer.textureType != TextureImporterType.Sprite)
+                {
+                    importer.textureType = TextureImporterType.Sprite;
+                    reimport = true;
+                }
+                if (importer.spriteImportMode != SpriteImportMode.Single)
+                {
+                    importer.spriteImportMode = SpriteImportMode.Single;
+                    reimport = true;
+                }
+                if (!importer.alphaIsTransparency)
+                {
+                    importer.alphaIsTransparency = true;
+                    reimport = true;
+                }
+                if (reimport)
+                {
+                    importer.SaveAndReimport();
+                }
+            }
+
+            return AssetDatabase.LoadAssetAtPath<Sprite>(path);
         }
 
         #endregion
