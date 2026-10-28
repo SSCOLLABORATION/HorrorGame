@@ -9,6 +9,7 @@ namespace VectorParkour
     public class VaultDetector : MonoBehaviour
     {
         private PlayerParkourController playerController;
+        private Transform currentVaultTarget;
 
         private void Awake()
         {
@@ -23,18 +24,22 @@ namespace VectorParkour
                 {
                     playerController = GetComponentInParent<PlayerParkourController>();
                 }
-                playerController?.SetInVaultTrigger(true, other.transform);
+
+                currentVaultTarget = other.transform;
+                playerController?.SetInVaultTrigger(true, currentVaultTarget);
             }
         }
 
         private void OnTriggerExit(Collider other)
         {
-            if (other.CompareTag("Obstacle_Vault"))
+            if (other.CompareTag("Obstacle_Vault") && other.transform == currentVaultTarget)
             {
                 if (playerController == null)
                 {
                     playerController = GetComponentInParent<PlayerParkourController>();
                 }
+
+                currentVaultTarget = null;
                 playerController?.SetInVaultTrigger(false, null);
             }
         }

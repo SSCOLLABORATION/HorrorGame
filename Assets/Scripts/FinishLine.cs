@@ -23,24 +23,17 @@ namespace VectorParkour
 
         private void OnTriggerEnter(Collider other)
         {
-            if (hasTriggered) return;
+            if (hasTriggered || other.isTrigger) return;
 
-            // Ignore child trigger colliders (e.g. VaultDetector) to avoid premature activation
-            if (other.isTrigger) return;
-
-            // Verify GameManager state
             if (GameManager.Instance != null)
             {
                 if (GameManager.Instance.CurrentState != GameState.Playing) return;
                 if (GameManager.Instance.CurrentLevelIndex != targetLevelIndex) return;
             }
 
-            // Verify the collider belongs to the actual Player
-            PlayerParkourController player = other.GetComponent<PlayerParkourController>();
-            if (player == null) player = other.GetComponentInParent<PlayerParkourController>();
+            PlayerParkourController player = other.GetComponentInParent<PlayerParkourController>();
             if (player == null) return;
 
-            // Spatially verify that the player is on this track corridor (within 5m along X)
             if (Mathf.Abs(player.transform.position.x - transform.position.x) > 5.0f)
             {
                 return;

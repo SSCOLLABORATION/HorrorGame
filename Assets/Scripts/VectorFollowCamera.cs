@@ -10,14 +10,8 @@ namespace VectorParkour
 
     /// <summary>
     /// 3D side-angled chase camera inspired by Vector.
-    /// Provides an angled chase perspective positioned close to the runner
-    /// so the player clearly sees character animations, incoming 3D obstacles,
-    /// and the Hunter pursuing from behind.
-    /// Uses rock-solid Z-axis lockstep tracking to eliminate forward/backward stutter,
-    /// smooth Y-damping for grounded jump arcs, dynamic FOV based on speed & threat proximity,
-    /// and an intelligent dual-rig occlusion system that smoothly transitions to an alternate
-    /// right-side perspective whenever solid walls or obstacles obstruct the default left view.
-    /// Includes SnapToTarget() for zero-drift instantaneous camera repositioning during level transitions.
+    /// Features zero-GC non-alloc occlusion checks, rock-solid Z lockstep,
+    /// SmoothDamp X/Y tracking, and frame-rate independent transitions.
     /// </summary>
     [RequireComponent(typeof(Camera))]
     public class VectorFollowCamera : MonoBehaviour
@@ -37,7 +31,8 @@ namespace VectorParkour
         [SerializeField] private LayerMask occlusionMask = ~0;
 
         [Header("Damping Parameters")]
-        [SerializeField] private float smoothTimeY = 0.08f; // Responsive vertical damping for jumps
+        [SerializeField] private float smoothTimeX = 0.06f; // Smooths lateral wall-run shifts
+        [SerializeField] private float smoothTimeY = 0.08f; // Smooths vertical jump arcs
 
         [Header("Dynamic FOV")]
         [SerializeField] private float baseFOV = 50.0f;
@@ -48,12 +43,16 @@ namespace VectorParkour
 
         private Camera cam;
         private PlayerParkourController playerController;
+        private float velocityX = 0f;
         private float velocityY = 0f;
 
         private CameraSide currentSide = CameraSide.DefaultLeft;
         private Vector3 currentOffset = new Vector3(-3.4f, 1.9f, -4.2f);
         private Vector3 currentEulerAngle = new Vector3(9.0f, 24.0f, 0.0f);
         private float timeSinceSideSwitch = 0f;
+
+        // Pre-allocated raycast buffer to avoid per-frame garbage collection spikes
+        private readonly RaycastHit[] occlusionHits = new RaycastHit[12];
 
         public CameraSide CurrentSide => currentSide;
         public Vector3 CurrentOffset => currentOffset;
@@ -118,10 +117,6 @@ namespace VectorParkour
             }
         }
 
-        /// <summary>
-        /// Immediately snaps camera position and orientation to the target with zero damping lag.
-        /// Clears all stale velocity/smoothing accumulators.
-        /// </summary>
         public void SnapToTarget()
         {
             if (target == null)
@@ -134,6 +129,7 @@ namespace VectorParkour
             currentOffset = defaultOffset;
             currentEulerAngle = defaultEulerAngle;
             timeSinceSideSwitch = 0f;
+            velocityX = 0f;
             velocityY = 0f;
 
             transform.position = target.position + currentOffset;
@@ -144,13 +140,11 @@ namespace VectorParkour
         {
             if (target == null) return false;
 
-            // 1. Explicit coordination: If player is wall running on left wall, left wall is between runner and default cam
             if (playerController != null && playerController.IsWallRunning && playerController.WallSide == -1)
             {
                 return true;
             }
 
-            // 2. Physical geometry test: SphereCast from candidate default position to player focus point
             Vector3 focusPoint = target.position + Vector3.up * 1.35f;
             Vector3 candidateCamPos = target.position + defaultOffset;
             Vector3 toFocus = focusPoint - candidateCamPos;
@@ -159,24 +153,23 @@ namespace VectorParkour
             if (distance <= 0.01f) return false;
 
             Ray ray = new Ray(candidateCamPos, toFocus / distance);
-            RaycastHit[] hits = Physics.SphereCastAll(ray, sphereCastRadius, distance, occlusionMask, QueryTriggerInteraction.Ignore);
+            int hitCount = Physics.SphereCastNonAlloc(ray, sphereCastRadius, occlusionHits, distance, occlusionMask, QueryTriggerInteraction.Ignore);
 
-            for (int i = 0; i < hits.Length; i++)
+            for (int i = 0; i < hitCount; i++)
             {
-                Transform hitT = hits[i].transform;
+                Transform hitT = occlusionHits[i].transform;
+                if (hitT == null) continue;
                 if (hitT == target || hitT.IsChildOf(target)) continue;
                 if (chaser != null && (hitT == chaser || hitT.IsChildOf(chaser))) continue;
 
-                // An obstacle or wall is in the line of sight
                 return true;
             }
 
             return false;
         }
 
-        private void UpdateCameraSide()
+        private void UpdateCameraSide(float dt)
         {
-            float dt = Time.unscaledDeltaTime;
             timeSinceSideSwitch += dt;
 
             bool defaultBlocked = IsDefaultViewObstructed();
@@ -186,21 +179,16 @@ namespace VectorParkour
             {
                 desiredSide = CameraSide.AlternateRight;
             }
-            else
+            else if (currentSide == CameraSide.AlternateRight)
             {
-                // Default view is clear!
-                if (currentSide == CameraSide.AlternateRight)
-                {
-                    // Only restore default after hysteresis duration has elapsed
-                    if (timeSinceSideSwitch >= minSideDuration)
-                    {
-                        desiredSide = CameraSide.DefaultLeft;
-                    }
-                }
-                else
+                if (timeSinceSideSwitch >= minSideDuration)
                 {
                     desiredSide = CameraSide.DefaultLeft;
                 }
+            }
+            else
+            {
+                desiredSide = CameraSide.DefaultLeft;
             }
 
             if (desiredSide != currentSide)
@@ -218,52 +206,48 @@ namespace VectorParkour
                 if (target == null) return;
             }
 
-            UpdateCameraSide();
+            // Use deltaTime during active gameplay to match CharacterController interpolation, unscaled when paused
+            float dt = Time.timeScale > 0f ? Time.deltaTime : Time.unscaledDeltaTime;
+            if (dt <= 0f) return;
 
-            float dt = Time.unscaledDeltaTime;
+            UpdateCameraSide(dt);
 
-            // Smoothly interpolate current offset and Euler angles towards active side target
             Vector3 targetSideOffset = (currentSide == CameraSide.DefaultLeft) ? defaultOffset : alternateOffset;
             Vector3 targetSideEuler = (currentSide == CameraSide.DefaultLeft) ? defaultEulerAngle : alternateEulerAngle;
 
-            currentOffset = Vector3.Lerp(currentOffset, targetSideOffset, dt * sideTransitionSpeed);
+            // Frame-rate independent exponential smoothing
+            float lerpFactor = 1f - Mathf.Exp(-sideTransitionSpeed * dt);
+
+            currentOffset = Vector3.Lerp(currentOffset, targetSideOffset, lerpFactor);
             currentEulerAngle = new Vector3(
-                Mathf.Lerp(currentEulerAngle.x, targetSideEuler.x, dt * sideTransitionSpeed),
-                Mathf.LerpAngle(currentEulerAngle.y, targetSideEuler.y, dt * sideTransitionSpeed),
-                Mathf.Lerp(currentEulerAngle.z, targetSideEuler.z, dt * sideTransitionSpeed)
+                Mathf.LerpAngle(currentEulerAngle.x, targetSideEuler.x, lerpFactor),
+                Mathf.LerpAngle(currentEulerAngle.y, targetSideEuler.y, lerpFactor),
+                Mathf.LerpAngle(currentEulerAngle.z, targetSideEuler.z, lerpFactor)
             );
 
-            // Desired camera position
             Vector3 targetPos = target.position + currentOffset;
 
-            // Direct forward Z lockstep: guarantees runner stays locked on screen along the run axis without micro-stutter
+            // Lockstep Z for zero forward jitter, SmoothDamp X and Y for fluid lateral & vertical motion
             float posZ = targetPos.z;
-
-            // Lateral tracking on X
-            float posX = targetPos.x;
-
-            // Smooth vertical damping on Y so jumps feel grounded and don't jerk the camera violently
-            float posY = Mathf.SmoothDamp(transform.position.y, targetPos.y, ref velocityY, smoothTimeY);
+            float posX = Mathf.SmoothDamp(transform.position.x, targetPos.x, ref velocityX, smoothTimeX, Mathf.Infinity, dt);
+            float posY = Mathf.SmoothDamp(transform.position.y, targetPos.y, ref velocityY, smoothTimeY, Mathf.Infinity, dt);
 
             transform.position = new Vector3(posX, posY, posZ);
             transform.rotation = Quaternion.Euler(currentEulerAngle);
 
-            UpdateDynamicFOV();
+            UpdateDynamicFOV(dt);
         }
 
-        private void UpdateDynamicFOV()
+        private void UpdateDynamicFOV(float dt)
         {
             if (cam == null) return;
 
             float targetFOV = baseFOV;
-            float dt = Time.unscaledDeltaTime;
 
-            // 1. Sprint burst widens FOV for high-speed rush feel
             if (playerController != null && playerController.IsSprinting)
             {
                 targetFOV = sprintFOV;
             }
-            // 2. Chaser within threat distance narrows FOV for tension
             else if (chaser != null)
             {
                 float chaserDistance = target.position.z - chaser.position.z;

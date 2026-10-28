@@ -23936,7 +23936,7 @@ MonoBehaviour:
   gravity: -24
   vaultDuration: 0.28
   slideDuration: 0.65
-  visualRoot: {fileID: 0}
+  visualRoot: {fileID: 1222713920}
 --- !u!143 &1222713922
 CharacterController:
   m_ObjectHideFlags: 0
@@ -24025,7 +24025,7 @@ MonoBehaviour:
     m_FontStyle: 1
     m_BestFit: 0
     m_MinSize: 10
-    m_MaxSize: 40
+    m_MaxSize: 64
     m_Alignment: 4
     m_AlignByGeometry: 0
     m_RichText: 1
@@ -29730,6 +29730,7 @@ MonoBehaviour:
   occlusionMask:
     serializedVersion: 2
     m_Bits: 4294967295
+  smoothTimeX: 0.06
   smoothTimeY: 0.35
   baseFOV: 60
   sprintFOV: 68
@@ -34206,6 +34207,7 @@ MonoBehaviour:
   baseSpeed: 9.5
   accelerationTime: 0.4
   jumpForce: 9.2
+  vaultDuration: 0.26
   gravity: -24
   maxFallSpeed: -28
   fastFallSpeed: -22
@@ -34219,7 +34221,7 @@ MonoBehaviour:
   wallTiltAngle: 18
   wallTiltSpeed: 12
   wallDisengageHopForce: 9
-  wallDisengageInwardForce: 5
+  lateralSmoothTime: 0.11
   wallRunMaxDuration: 3.5
   wallExitCooldown: 0.35
   sprintMultiplier: 1.4
@@ -34228,7 +34230,7 @@ MonoBehaviour:
   stumbleDuration: 0.5
   stumbleSpeedMultiplier: 0.4
   finishZ: 216
-  visualRoot: {fileID: 0}
+  visualRoot: {fileID: 1732038408}
 --- !u!143 &1732038410
 CharacterController:
   m_ObjectHideFlags: 0
