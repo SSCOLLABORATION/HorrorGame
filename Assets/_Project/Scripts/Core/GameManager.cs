@@ -38,6 +38,8 @@ namespace Vector3D.Core
         [Header("Level Roots for Isolation")]
         [SerializeField] private GameObject _level1Root;
         [SerializeField] private GameObject _level2Root;
+        [SerializeField] private GameObject _level3Root;
+        [SerializeField] private GameObject _level4Root;
 
         public GameState CurrentState { get; private set; } = GameState.WaitingToStart;
         public int CurrentLevelIndex => _currentLevelIndex;
@@ -52,6 +54,28 @@ namespace Vector3D.Core
         public static readonly Vector3 Level1ChaserSpawn = new Vector3(0f, 1.1f, -6f);
         public static readonly Vector3 Level2PlayerSpawn = new Vector3(100f, 1.1f, 0f);
         public static readonly Vector3 Level2ChaserSpawn = new Vector3(100f, 1.1f, -6f);
+        public static readonly Vector3 Level3PlayerSpawn = new Vector3(200f, 1.1f, 0f);
+        public static readonly Vector3 Level3ChaserSpawn = new Vector3(200f, 1.1f, -6f);
+        public static readonly Vector3 Level4PlayerSpawn = new Vector3(300f, 1.1f, 0f);
+        public static readonly Vector3 Level4ChaserSpawn = new Vector3(300f, 1.1f, -6f);
+
+        private Vector3 GetPlayerSpawnForLevel(int level) => level switch
+        {
+            1 => Level1PlayerSpawn,
+            2 => Level2PlayerSpawn,
+            3 => Level3PlayerSpawn,
+            4 => Level4PlayerSpawn,
+            _ => Level1PlayerSpawn
+        };
+
+        private Vector3 GetChaserSpawnForLevel(int level) => level switch
+        {
+            1 => Level1ChaserSpawn,
+            2 => Level2ChaserSpawn,
+            3 => Level3ChaserSpawn,
+            4 => Level4ChaserSpawn,
+            _ => Level1ChaserSpawn
+        };
 
         private bool _isTransitioning = false;
 
@@ -121,16 +145,16 @@ namespace Vector3D.Core
         }
 
         /// <summary>
-        /// Selects and switches directly to a specific level (Level 1 or Level 2).
+        /// Selects and switches directly to a specific level (Level 1, 2, or 3).
         /// Teleports Player, Chaser, snaps camera, resets finish lines, updates level visibility, and updates game state.
         /// </summary>
         public void SelectLevel(int levelIndex, bool startPlaying = true)
         {
-            _currentLevelIndex = Mathf.Clamp(levelIndex, 1, 2);
+            _currentLevelIndex = Mathf.Clamp(levelIndex, 1, 4);
             UpdateLevelVisibility();
 
-            Vector3 playerSpawn = _currentLevelIndex == 1 ? Level1PlayerSpawn : Level2PlayerSpawn;
-            Vector3 chaserSpawn = _currentLevelIndex == 1 ? Level1ChaserSpawn : Level2ChaserSpawn;
+            Vector3 playerSpawn = GetPlayerSpawnForLevel(_currentLevelIndex);
+            Vector3 chaserSpawn = GetChaserSpawnForLevel(_currentLevelIndex);
 
             PlayerParkourController player = Object.FindFirstObjectByType<PlayerParkourController>();
             ChaserAI chaser = Object.FindFirstObjectByType<ChaserAI>();
@@ -167,17 +191,20 @@ namespace Vector3D.Core
         }
 
         /// <summary>
-        /// Transitions the game from Level 1 to Level 2 in the same scene.
-        /// Teleports Player, Chaser, snaps camera, updates track center, activates Level 2, and resumes gameplay.
+        /// Transitions the game to the next level (1 -> 2 -> 3) in the same scene.
+        /// Teleports Player, Chaser, snaps camera, updates track center, activates the next level, and resumes gameplay.
         /// </summary>
         public void StartNextLevel()
         {
             if (_isTransitioning) return;
-            if (!IsGameWon || _currentLevelIndex != 1) return;
+            if (!IsGameWon || _currentLevelIndex >= 4) return;
 
             _isTransitioning = true;
-            _currentLevelIndex = 2;
+            _currentLevelIndex++;
             UpdateLevelVisibility();
+
+            Vector3 playerSpawn = GetPlayerSpawnForLevel(_currentLevelIndex);
+            Vector3 chaserSpawn = GetChaserSpawnForLevel(_currentLevelIndex);
 
             PlayerParkourController player = Object.FindFirstObjectByType<PlayerParkourController>();
             ChaserAI chaser = Object.FindFirstObjectByType<ChaserAI>();
@@ -185,12 +212,12 @@ namespace Vector3D.Core
 
             if (player != null)
             {
-                player.TeleportToStart(Level2PlayerSpawn);
+                player.TeleportToStart(playerSpawn);
             }
 
             if (chaser != null)
             {
-                chaser.TeleportToStart(Level2ChaserSpawn);
+                chaser.TeleportToStart(chaserSpawn);
             }
 
             if (cam != null)
@@ -215,8 +242,8 @@ namespace Vector3D.Core
         {
             UpdateLevelVisibility();
 
-            Vector3 playerSpawn = _currentLevelIndex == 1 ? Level1PlayerSpawn : Level2PlayerSpawn;
-            Vector3 chaserSpawn = _currentLevelIndex == 1 ? Level1ChaserSpawn : Level2ChaserSpawn;
+            Vector3 playerSpawn = GetPlayerSpawnForLevel(_currentLevelIndex);
+            Vector3 chaserSpawn = GetChaserSpawnForLevel(_currentLevelIndex);
 
             PlayerParkourController player = Object.FindFirstObjectByType<PlayerParkourController>();
             ChaserAI chaser = Object.FindFirstObjectByType<ChaserAI>();
@@ -259,6 +286,14 @@ namespace Vector3D.Core
             {
                 _level2Root.SetActive(_currentLevelIndex == 2);
             }
+            if (_level3Root != null)
+            {
+                _level3Root.SetActive(_currentLevelIndex == 3);
+            }
+            if (_level4Root != null)
+            {
+                _level4Root.SetActive(_currentLevelIndex == 4);
+            }
         }
 
         private void EnsureLevelRoots()
@@ -275,6 +310,20 @@ namespace Vector3D.Core
                 GameObject go = GameObject.Find("ParkourLevel/Level 2");
                 if (go == null) go = GameObject.Find("Level 2");
                 _level2Root = go;
+            }
+
+            if (_level3Root == null)
+            {
+                GameObject go = GameObject.Find("ParkourLevel/Level 3");
+                if (go == null) go = GameObject.Find("Level 3");
+                _level3Root = go;
+            }
+
+            if (_level4Root == null)
+            {
+                GameObject go = GameObject.Find("ParkourLevel/Level 4");
+                if (go == null) go = GameObject.Find("Level 4");
+                _level4Root = go;
             }
         }
 

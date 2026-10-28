@@ -5,13 +5,15 @@ namespace VectorParkour
     public enum CameraSide
     {
         DefaultLeft,
-        AlternateRight
+        AlternateRight,
+        OverheadTop
     }
 
     /// <summary>
     /// 3D side-angled chase camera inspired by Vector.
     /// Features zero-GC non-alloc occlusion checks, rock-solid Z lockstep,
-    /// SmoothDamp X/Y tracking, and frame-rate independent transitions.
+    /// SmoothDamp X/Y tracking, frame-rate independent transitions,
+    /// and contextual overhead/top-down follow view when between both walls.
     /// </summary>
     [RequireComponent(typeof(Camera))]
     public class VectorFollowCamera : MonoBehaviour
@@ -23,6 +25,16 @@ namespace VectorParkour
         [SerializeField] private Vector3 defaultEulerAngle = new Vector3(9.0f, 24.0f, 0.0f);
         [SerializeField] private Vector3 alternateOffset = new Vector3(3.4f, 1.9f, -4.2f);
         [SerializeField] private Vector3 alternateEulerAngle = new Vector3(9.0f, -24.0f, 0.0f);
+
+        [Header("Overhead / Top View Settings")]
+        [Tooltip("Follow offset when player is between both walls (overhead/top view).")]
+        [SerializeField] private Vector3 overheadOffset = new Vector3(0.0f, 7.5f, -3.0f);
+
+        [Tooltip("Follow Euler angles (pitch, yaw, roll) looking down from above.")]
+        [SerializeField] private Vector3 overheadEulerAngle = new Vector3(62.0f, 0.0f, 0.0f);
+
+        [Tooltip("Speed of transition into/out of overhead top view.")]
+        [SerializeField] private float overheadTransitionSpeed = 5.0f;
 
         [Header("Occlusion & Side Transition")]
         [SerializeField] private float sideTransitionSpeed = 6.0f;
@@ -58,6 +70,8 @@ namespace VectorParkour
         public Vector3 CurrentOffset => currentOffset;
         public Vector3 CurrentEulerAngle => currentEulerAngle;
         public bool IsObstructed => IsDefaultViewObstructed();
+        public bool IsOverhead => currentSide == CameraSide.OverheadTop;
+        public bool IsBetweenWalls => IsBetweenBothWalls();
 
         public void SetTargets(Transform playerTarget, Transform chaserTarget)
         {
@@ -168,27 +182,59 @@ namespace VectorParkour
             return false;
         }
 
+        public bool IsBetweenBothWalls()
+        {
+            if (playerController != null)
+            {
+                return playerController.IsBetweenWalls;
+            }
+
+            if (target == null) return false;
+            Vector3 origin = target.position + Vector3.up * 1.0f;
+            float probeDist = 4.2f;
+            bool hasLeft = Physics.Raycast(origin, -Vector3.right, out RaycastHit hitL, probeDist, occlusionMask, QueryTriggerInteraction.Ignore) &&
+                           IsWallObstacle(hitL.collider);
+            bool hasRight = Physics.Raycast(origin, Vector3.right, out RaycastHit hitR, probeDist, occlusionMask, QueryTriggerInteraction.Ignore) &&
+                            IsWallObstacle(hitR.collider);
+            return hasLeft && hasRight;
+        }
+
+        private bool IsWallObstacle(Collider col)
+        {
+            if (col == null) return false;
+            return col.CompareTag("WallRunObstacle") || col.gameObject.name.Contains("WallRun");
+        }
+
         private void UpdateCameraSide(float dt)
         {
             timeSinceSideSwitch += dt;
 
-            bool defaultBlocked = IsDefaultViewObstructed();
+            bool betweenBothWalls = IsBetweenBothWalls();
             CameraSide desiredSide = currentSide;
 
-            if (defaultBlocked)
+            if (betweenBothWalls)
             {
-                desiredSide = CameraSide.AlternateRight;
-            }
-            else if (currentSide == CameraSide.AlternateRight)
-            {
-                if (timeSinceSideSwitch >= minSideDuration)
-                {
-                    desiredSide = CameraSide.DefaultLeft;
-                }
+                // Core Requirement: Switch to overhead/top-down follow angle when between both walls
+                desiredSide = CameraSide.OverheadTop;
             }
             else
             {
-                desiredSide = CameraSide.DefaultLeft;
+                bool defaultBlocked = IsDefaultViewObstructed();
+                if (defaultBlocked)
+                {
+                    desiredSide = CameraSide.AlternateRight;
+                }
+                else if (currentSide == CameraSide.AlternateRight || currentSide == CameraSide.OverheadTop)
+                {
+                    if (timeSinceSideSwitch >= minSideDuration)
+                    {
+                        desiredSide = CameraSide.DefaultLeft;
+                    }
+                }
+                else
+                {
+                    desiredSide = CameraSide.DefaultLeft;
+                }
             }
 
             if (desiredSide != currentSide)
@@ -212,11 +258,29 @@ namespace VectorParkour
 
             UpdateCameraSide(dt);
 
-            Vector3 targetSideOffset = (currentSide == CameraSide.DefaultLeft) ? defaultOffset : alternateOffset;
-            Vector3 targetSideEuler = (currentSide == CameraSide.DefaultLeft) ? defaultEulerAngle : alternateEulerAngle;
+            Vector3 targetSideOffset;
+            Vector3 targetSideEuler;
+
+            switch (currentSide)
+            {
+                case CameraSide.OverheadTop:
+                    targetSideOffset = overheadOffset;
+                    targetSideEuler = overheadEulerAngle;
+                    break;
+                case CameraSide.AlternateRight:
+                    targetSideOffset = alternateOffset;
+                    targetSideEuler = alternateEulerAngle;
+                    break;
+                case CameraSide.DefaultLeft:
+                default:
+                    targetSideOffset = defaultOffset;
+                    targetSideEuler = defaultEulerAngle;
+                    break;
+            }
 
             // Frame-rate independent exponential smoothing
-            float lerpFactor = 1f - Mathf.Exp(-sideTransitionSpeed * dt);
+            float activeTransitionSpeed = (currentSide == CameraSide.OverheadTop) ? overheadTransitionSpeed : sideTransitionSpeed;
+            float lerpFactor = 1f - Mathf.Exp(-activeTransitionSpeed * dt);
 
             currentOffset = Vector3.Lerp(currentOffset, targetSideOffset, lerpFactor);
             currentEulerAngle = new Vector3(

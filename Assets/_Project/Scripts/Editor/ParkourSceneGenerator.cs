@@ -65,6 +65,10 @@ namespace Vector3D.EditorScripts
             if (oldL1 != null) Undo.DestroyObjectImmediate(oldL1.gameObject);
             Transform oldL2 = levelRoot.transform.Find("Level 2");
             if (oldL2 != null) Undo.DestroyObjectImmediate(oldL2.gameObject);
+            Transform oldL3 = levelRoot.transform.Find("Level 3");
+            if (oldL3 != null) Undo.DestroyObjectImmediate(oldL3.gameObject);
+            Transform oldL4 = levelRoot.transform.Find("Level 4");
+            if (oldL4 != null) Undo.DestroyObjectImmediate(oldL4.gameObject);
             Transform oldTrack = levelRoot.transform.Find("TrackSegments");
             if (oldTrack != null) Undo.DestroyObjectImmediate(oldTrack.gameObject);
             Transform oldObs = levelRoot.transform.Find("Obstacles");
@@ -80,33 +84,43 @@ namespace Vector3D.EditorScripts
             level2Root.transform.SetParent(levelRoot.transform, false);
             BuildLevel2(level2Root.transform, floorMat, railingMat, vaultMat, slideMat, goalMat, wallCyanMat, wallOrangeMat);
 
-            // 8. Configure GameManager with Level Isolation References
-            SetupGameManager(level1Root, level2Root);
+            // 8. Build Level 3 (X = 200f, Z = 0..252m)
+            GameObject level3Root = new GameObject("Level 3");
+            level3Root.transform.SetParent(levelRoot.transform, false);
+            BuildLevel3(level3Root.transform, floorMat, railingMat, vaultMat, slideMat, goalMat, wallCyanMat, wallOrangeMat);
 
-            // 9. Setup Lighting
+            // 9. Build Level 4 (X = 300f, Z = 0..252m)
+            GameObject level4Root = new GameObject("Level 4");
+            level4Root.transform.SetParent(levelRoot.transform, false);
+            BuildLevel4(level4Root.transform, floorMat, railingMat, vaultMat, slideMat, goalMat, wallCyanMat, wallOrangeMat);
+
+            // 10. Configure GameManager with Level Isolation References
+            SetupGameManager(level1Root, level2Root, level3Root, level4Root);
+
+            // 11. Setup Lighting
             SetupLighting(levelRoot.transform);
 
-            // 10. Setup Player (Reuse existing or assemble)
+            // 12. Setup Player (Reuse existing or assemble)
             GameObject player = EnsurePlayer(levelRoot.transform);
 
-            // 11. Setup Chaser (Reuse existing or assemble)
+            // 13. Setup Chaser (Reuse existing or assemble)
             GameObject chaser = EnsureChaser(levelRoot.transform, player.transform);
 
-            // 12. Setup Follow Camera
+            // 14. Setup Follow Camera
             EnsureCamera(player.transform, chaser.transform);
 
-            // 13. Setup Audio Manager (BGM and SFX)
+            // 15. Setup Audio Manager (BGM and SFX)
             SetupAudioManager();
 
-            // 14. Build Full Single-Scene UI Canvas Overlay System (with Level Select & NextLevelButton)
+            // 16. Build Full Single-Scene UI Canvas Overlay System (with Level Select & NextLevelButton)
             BuildUISystem();
 
-            // 15. Mark Dirty and Save Scene
+            // 17. Mark Dirty and Save Scene
             var activeScene = EditorSceneManager.GetActiveScene();
             EditorSceneManager.MarkSceneDirty(activeScene);
             EditorSceneManager.SaveScene(activeScene);
 
-            Debug.Log("<color=green>[Vector3D]</color> Multi-Level Scene (Level 1 & Level 2) with Audio System generated and saved successfully!");
+            Debug.Log("<color=green>[Vector3D]</color> Multi-Level Scene (Level 1, Level 2, Level 3 & Level 4) with Audio System generated and saved successfully!");
         }
 
         #region Level 1 Construction (X = 0f)
@@ -185,8 +199,8 @@ namespace Vector3D.EditorScripts
 
             // Segment 3: Z 82 to 124 (42m platform)
             BuildPlatformSegment(trackRoot.transform, trackX, 82.0f, 42.0f, 4.0f, floorMat, railingMat);
-            // Generous recovery run after wall-run: Wall ends at Z = 85m, Slide obstacle placed at Z = 104m (19m distance / 2.0s reaction time)
-            BuildSlideBarrier(obstaclesRoot.transform, trackX, 104.0f, slideMat, railingMat);
+            // Generous recovery run after wall-run: Wall ends at Z = 85m, Slide obstacle placed at Z = 108m (23m distance)
+            BuildSlideBarrier(obstaclesRoot.transform, trackX, 108.0f, slideMat, railingMat);
 
             // Gap 3: Z 124 to 139 (15m wide chasm!)
             // Right Wall-Run Surface: centered at X = 102.0f, spanning Z = 121 to 142 (21m length, center Z = 131.5)
@@ -194,8 +208,8 @@ namespace Vector3D.EditorScripts
 
             // Segment 4: Z 139 to 180 (41m platform)
             BuildPlatformSegment(trackRoot.transform, trackX, 139.0f, 41.0f, 4.0f, floorMat, railingMat);
-            // Generous recovery run after wall-run: Wall ends at Z = 142m, Vault obstacle placed at Z = 162m (20m distance / 2.1s reaction time)
-            BuildVaultBlock(obstaclesRoot.transform, trackX, 162.0f, vaultMat);
+            // Generous recovery run after wall-run: Wall ends at Z = 142m, Vault obstacle placed at Z = 166m (24m distance)
+            BuildVaultBlock(obstaclesRoot.transform, trackX, 166.0f, vaultMat);
 
             // Gap 4: Z 180 to 196 (16m wide chasm!)
             // Left Wall-Run Surface: centered at X = 98.0f, spanning Z = 177 to 199 (22m length, center Z = 188)
@@ -203,9 +217,9 @@ namespace Vector3D.EditorScripts
 
             // Segment 5: Z 196 to 252 (56m platform to finish)
             BuildPlatformSegment(trackRoot.transform, trackX, 196.0f, 56.0f, 4.0f, floorMat, railingMat);
-            // Generous recovery run after wall-run: Wall ends at Z = 199m, Slide obstacle placed at Z = 219m (20m distance / 2.1s reaction time)
-            BuildSlideBarrier(obstaclesRoot.transform, trackX, 219.0f, slideMat, railingMat);
-            BuildVaultBlock(obstaclesRoot.transform, trackX, 233.0f, vaultMat);
+            // Generous recovery run after wall-run: Wall ends at Z = 199m, Slide obstacle placed at Z = 222m (23m distance)
+            BuildSlideBarrier(obstaclesRoot.transform, trackX, 222.0f, slideMat, railingMat);
+            BuildVaultBlock(obstaclesRoot.transform, trackX, 236.0f, vaultMat);
 
             // Finish Goal Gate at Z = 246m
             BuildFinishGate(obstaclesRoot.transform, trackX, 246.0f, goalMat, railingMat);
@@ -213,14 +227,163 @@ namespace Vector3D.EditorScripts
 
         #endregion
 
+        #region Level 3 Construction (X = 200f)
+
+        private static void BuildLevel3(Transform levelRoot, Material floorMat, Material railingMat, Material vaultMat, Material slideMat, Material goalMat, Material cyanWallMat, Material orangeWallMat)
+        {
+            float trackX = 200.0f;
+            GameObject trackRoot = new GameObject("TrackSegments");
+            trackRoot.transform.SetParent(levelRoot, false);
+
+            GameObject obstaclesRoot = new GameObject("Obstacles");
+            obstaclesRoot.transform.SetParent(levelRoot, false);
+
+            GameObject wallsRoot = new GameObject("WallRunSurfaces");
+            wallsRoot.transform.SetParent(levelRoot, false);
+
+            // =========================================================================
+            // Section A: Introduction (Conventional running, vaulting, and sliding)
+            // =========================================================================
+            // Segment 1: Z -12 to 35 (Ground level Y = 0)
+            BuildPlatformSegment(trackRoot.transform, trackX, -12.0f, 47.0f, 4.0f, floorMat, railingMat);
+            BuildVaultBlock(obstaclesRoot.transform, trackX, 16.0f, vaultMat);
+
+            // Gap 1: Z 35 to 40 (5m jumpable gap)
+            // Segment 2: Z 40 to 65 (25m platform, ground level Y = 0)
+            BuildPlatformSegment(trackRoot.transform, trackX, 40.0f, 25.0f, 4.0f, floorMat, railingMat);
+            BuildSlideBarrier(obstaclesRoot.transform, trackX, 52.0f, slideMat, railingMat);
+
+            // =========================================================================
+            // Section B & C: Wall-Run Initiation & Vertical Alternating Wall-Jump Structure
+            // =========================================================================
+            // Abyss Pit below vertical climbing shaft: Z = 65 to 102 (37m open pit)
+            //
+            // Left Wall-Run Surface (Cyan):
+            // Center X = 198.0f (thickness 0.5m -> inner face at X = 198.25f, player attaches at X ≈ 198.72f)
+            // Spanning Z = 62.0f to 106.0f (Length = 44m, Center Z = 84.0f, Height = 10.0f)
+            // Starts before the gap (at Z = 62m) so player seamlessly initiates wall run from Segment 2
+            BuildWallRunSurface(wallsRoot.transform, 198.0f, 84.0f, 44.0f, 10.0f, 0.5f, cyanWallMat, "WallRun_Left_V1");
+
+            // Right Wall-Run Surface (Orange):
+            // Center X = 202.0f (thickness 0.5m -> inner face at X = 201.75f, player attaches at X ≈ 201.28f)
+            // Spanning Z = 62.0f to 108.0f (Length = 46m, Center Z = 85.0f, Height = 10.0f)
+            // Opposing wall flanking the vertical climbing shaft creating an overhead canyon corridor
+            BuildWallRunSurface(wallsRoot.transform, 202.0f, 85.0f, 46.0f, 10.0f, 0.5f, orangeWallMat, "WallRun_Right_V1");
+
+            // =========================================================================
+            // Section D: Upper Platform & Rooftop Drop (Elevated at Y = 6.0m)
+            // =========================================================================
+            // Segment 3: Upper Platform Z = 92 to 170 (Length = 78m, Elevated at Y = 6.0m)
+            BuildPlatformSegment(trackRoot.transform, trackX, 92.0f, 78.0f, 4.0f, floorMat, railingMat, 6.0f);
+            // Generous recovery run after wall-run: Walls end at Z = 108m, Slide barrier placed at Z = 134m (26m distance)
+            BuildSlideBarrier(obstaclesRoot.transform, trackX, 134.0f, slideMat, railingMat, 6.0f);
+            BuildVaultBlock(obstaclesRoot.transform, trackX, 154.0f, vaultMat, 6.0f);
+
+            // Rooftop Drop Gap: Z = 170 to 176 (6m gap, dropping from Y = 6.0m to ground Y = 0.0m)
+
+            // =========================================================================
+            // Section E: Landing Platform & Finish Line (Ground level Y = 0)
+            // =========================================================================
+            // Segment 4: Landing Platform Z = 176 to 252 (Length = 76m, Ground level Y = 0)
+            BuildPlatformSegment(trackRoot.transform, trackX, 176.0f, 76.0f, 4.0f, floorMat, railingMat, 0.0f);
+            BuildSlideBarrier(obstaclesRoot.transform, trackX, 202.0f, slideMat, railingMat, 0.0f);
+            BuildVaultBlock(obstaclesRoot.transform, trackX, 222.0f, vaultMat, 0.0f);
+
+            // Finish Goal Gate at Z = 246m (TargetLevelIndex = 3)
+            BuildFinishGate(obstaclesRoot.transform, trackX, 246.0f, goalMat, railingMat);
+        }
+
+        #endregion
+
+        #region Level 4 Construction (X = 300f - The Final Parkour Challenge)
+
+        private static void BuildLevel4(Transform levelRoot, Material floorMat, Material railingMat, Material vaultMat, Material slideMat, Material goalMat, Material cyanWallMat, Material orangeWallMat)
+        {
+            float trackX = 300.0f;
+            GameObject trackRoot = new GameObject("TrackSegments");
+            trackRoot.transform.SetParent(levelRoot, false);
+
+            GameObject obstaclesRoot = new GameObject("Obstacles");
+            obstaclesRoot.transform.SetParent(levelRoot, false);
+
+            GameObject wallsRoot = new GameObject("WallRunSurfaces");
+            wallsRoot.transform.SetParent(levelRoot, false);
+
+            // =========================================================================
+            // Section A: The Last Run (Z = -12m to 58m, Ground Y = 0)
+            // =========================================================================
+            // Platform 1: Z = -12 to 32 (Length = 44m, Ground Y = 0)
+            BuildPlatformSegment(trackRoot.transform, trackX, -12.0f, 44.0f, 4.0f, floorMat, railingMat, 0.0f);
+            BuildVaultBlock(obstaclesRoot.transform, trackX, 14.0f, vaultMat, 0.0f);
+            BuildSlideBarrier(obstaclesRoot.transform, trackX, 24.0f, slideMat, railingMat, 0.0f);
+
+            // Jumpable Gap 1: Z = 32 to 37 (5m gap)
+            // Platform 2: Z = 37 to 58 (Length = 21m, Ground Y = 0)
+            BuildPlatformSegment(trackRoot.transform, trackX, 37.0f, 21.0f, 4.0f, floorMat, railingMat, 0.0f);
+            BuildVaultBlock(obstaclesRoot.transform, trackX, 46.0f, vaultMat, 0.0f);
+
+            // =========================================================================
+            // Section B: Combined Obstacle Sequence (Z = 58m to 88m, Ground Y = 0)
+            // =========================================================================
+            // Jumpable Gap 2: Z = 58 to 63 (5m gap)
+            // Platform 3: Z = 63 to 88 (Length = 25m, Ground Y = 0)
+            BuildPlatformSegment(trackRoot.transform, trackX, 63.0f, 25.0f, 4.0f, floorMat, railingMat, 0.0f);
+            BuildSlideBarrier(obstaclesRoot.transform, trackX, 68.0f, slideMat, railingMat, 0.0f);
+            BuildVaultBlock(obstaclesRoot.transform, trackX, 74.0f, vaultMat, 0.0f);
+
+            // Wall-Run Surface Right (Orange): Z = 78 to 88 (Length = 10m, Center Z = 83.0f, Height = 5.0f, thickness = 0.5m)
+            BuildWallRunSurface(wallsRoot.transform, 302.0f, 83.0f, 10.0f, 5.0f, 0.5f, orangeWallMat, "WallRun_Right_SectionB");
+
+            // =========================================================================
+            // Section C: Vertical Wall-Jump Gauntlet (Z = 88m to 145m)
+            // =========================================================================
+            // Abyss Pit below vertical climbing shaft: Z = 88 to 120 (32m open abyss pit)
+            //
+            // Left Wall-Run Surface (Cyan):
+            // Center X = 298.0f (thickness 0.5m -> inner face at X = 298.25f, player attaches at X ≈ 298.72f)
+            // Spanning Z = 86.0f to 125.0f (Length = 39m, Center Z = 105.5f, Height = 12.0f)
+            // Starts before the abyss (at Z = 86m) so player seamlessly initiates wall run from Platform 3
+            BuildWallRunSurface(wallsRoot.transform, 298.0f, 105.5f, 39.0f, 12.0f, 0.5f, cyanWallMat, "WallRun_Left_FinalGauntlet");
+
+            // Right Wall-Run Surface (Orange):
+            // Center X = 302.0f (thickness 0.5m -> inner face at X = 301.75f, player attaches at X ≈ 301.28f)
+            // Spanning Z = 86.0f to 125.0f (Length = 39m, Center Z = 105.5f, Height = 12.0f)
+            // Opposing wall flanking the vertical gauntlet; engaging Shift + A/D alternating traversal
+            BuildWallRunSurface(wallsRoot.transform, 302.0f, 105.5f, 39.0f, 12.0f, 0.5f, orangeWallMat, "WallRun_Right_FinalGauntlet");
+
+            // =========================================================================
+            // Section D: The Chaser's Final Pursuit (Z = 120m to 186m, Elevated Y = 6.0m)
+            // =========================================================================
+            // Platform 4: Upper Platform Z = 120 to 180 (Length = 60m, Elevated at Y = 6.0m)
+            BuildPlatformSegment(trackRoot.transform, trackX, 120.0f, 60.0f, 4.0f, floorMat, railingMat, 6.0f);
+            // Generous recovery run after wall-run: Walls end at Z = 125m, Slide barrier placed at Z = 146m (21m distance)
+            BuildSlideBarrier(obstaclesRoot.transform, trackX, 146.0f, slideMat, railingMat, 6.0f);
+            BuildVaultBlock(obstaclesRoot.transform, trackX, 165.0f, vaultMat, 6.0f);
+
+            // Rooftop Drop Gap: Z = 180 to 186 (6m gap, dropping from Y = 6.0m down to ground Y = 0.0m)
+
+            // =========================================================================
+            // Section E: The Final Approach & Finish (Z = 186m to 252m, Ground Y = 0)
+            // =========================================================================
+            // Platform 5: Landing Platform Z = 186 to 252 (Length = 66m, Ground Y = 0.0m)
+            BuildPlatformSegment(trackRoot.transform, trackX, 186.0f, 66.0f, 4.0f, floorMat, railingMat, 0.0f);
+            BuildSlideBarrier(obstaclesRoot.transform, trackX, 205.0f, slideMat, railingMat, 0.0f);
+            BuildVaultBlock(obstaclesRoot.transform, trackX, 224.0f, vaultMat, 0.0f);
+
+            // Finish Goal Gate at Z = 246m (TargetLevelIndex = 4)
+            BuildFinishGate(obstaclesRoot.transform, trackX, 246.0f, goalMat, railingMat);
+        }
+
+        #endregion
+
         #region ProBuilder Geometry Generation
 
-        private static void BuildPlatformSegment(Transform parent, float trackX, float startZ, float length, float width, Material floorMat, Material railingMat)
+        private static void BuildPlatformSegment(Transform parent, float trackX, float startZ, float length, float width, Material floorMat, Material railingMat, float topY = 0.0f)
         {
             float thickness = 2.0f;
             float centerZ = startZ + (length / 2.0f);
             Vector3 size = new Vector3(width, thickness, length);
-            Vector3 position = new Vector3(trackX, -thickness / 2.0f, centerZ);
+            Vector3 position = new Vector3(trackX, topY - (thickness / 2.0f), centerZ);
 
             ProBuilderMesh floorPB = ShapeGenerator.GenerateCube(PivotLocation.Center, size);
             floorPB.transform.position = position;
@@ -238,14 +401,14 @@ namespace Vector3D.EditorScripts
             bc.size = size;
 
             // Side Curbs along track edges (Width: 0.2m, Height: 0.35m)
-            BuildCurb(parent, trackX - (width / 2.0f) - 0.1f, centerZ, length, railingMat);
-            BuildCurb(parent, trackX + (width / 2.0f) + 0.1f, centerZ, length, railingMat);
+            BuildCurb(parent, trackX - (width / 2.0f) - 0.1f, centerZ, length, railingMat, topY);
+            BuildCurb(parent, trackX + (width / 2.0f) + 0.1f, centerZ, length, railingMat, topY);
         }
 
-        private static void BuildCurb(Transform parent, float posX, float centerZ, float length, Material mat)
+        private static void BuildCurb(Transform parent, float posX, float centerZ, float length, Material mat, float topY = 0.0f)
         {
             Vector3 size = new Vector3(0.2f, 0.35f, length);
-            Vector3 pos = new Vector3(posX, 0.175f, centerZ);
+            Vector3 pos = new Vector3(posX, topY + 0.175f, centerZ);
 
             ProBuilderMesh curbPB = ShapeGenerator.GenerateCube(PivotLocation.Center, size);
             curbPB.transform.position = pos;
@@ -263,10 +426,10 @@ namespace Vector3D.EditorScripts
             bc.size = size;
         }
 
-        private static void BuildVaultBlock(Transform parent, float trackX, float z, Material vaultMat)
+        private static void BuildVaultBlock(Transform parent, float trackX, float z, Material vaultMat, float topY = 0.0f)
         {
             Vector3 size = new Vector3(4.0f, 1.2f, 1.2f);
-            Vector3 pos = new Vector3(trackX, 0.6f, z);
+            Vector3 pos = new Vector3(trackX, topY + 0.6f, z);
 
             ProBuilderMesh pb = ShapeGenerator.GenerateCube(PivotLocation.Center, size);
             pb.transform.position = pos;
@@ -288,14 +451,14 @@ namespace Vector3D.EditorScripts
             bc.size = size;
         }
 
-        private static void BuildSlideBarrier(Transform parent, float trackX, float z, Material slideMat, Material postMat)
+        private static void BuildSlideBarrier(Transform parent, float trackX, float z, Material slideMat, Material postMat, float topY = 0.0f)
         {
             GameObject barrierRoot = new GameObject($"SlideBarrier_{trackX:F0}_{z:F0}");
             barrierRoot.transform.SetParent(parent);
-            barrierRoot.transform.position = new Vector3(trackX, 0f, z);
+            barrierRoot.transform.position = new Vector3(trackX, topY, z);
 
             Vector3 beamSize = new Vector3(4.0f, 1.0f, 0.8f);
-            Vector3 beamPos = new Vector3(trackX, 1.7f, z);
+            Vector3 beamPos = new Vector3(trackX, topY + 1.7f, z);
 
             ProBuilderMesh beamPB = ShapeGenerator.GenerateCube(PivotLocation.Center, beamSize);
             beamPB.transform.position = beamPos;
@@ -317,14 +480,14 @@ namespace Vector3D.EditorScripts
             bc.size = beamSize;
 
             // Side support pillars
-            BuildSupportPost(barrierRoot.transform, trackX - 1.95f, z, postMat);
-            BuildSupportPost(barrierRoot.transform, trackX + 1.95f, z, postMat);
+            BuildSupportPost(barrierRoot.transform, trackX - 1.95f, z, postMat, topY);
+            BuildSupportPost(barrierRoot.transform, trackX + 1.95f, z, postMat, topY);
         }
 
-        private static void BuildSupportPost(Transform parent, float posX, float z, Material postMat)
+        private static void BuildSupportPost(Transform parent, float posX, float z, Material postMat, float topY = 0.0f)
         {
             Vector3 postSize = new Vector3(0.2f, 2.2f, 0.8f);
-            Vector3 postPos = new Vector3(posX, 1.1f, z);
+            Vector3 postPos = new Vector3(posX, topY + 1.1f, z);
 
             ProBuilderMesh postPB = ShapeGenerator.GenerateCube(PivotLocation.Center, postSize);
             postPB.transform.position = postPos;
@@ -407,7 +570,7 @@ namespace Vector3D.EditorScripts
             trigger.size = new Vector3(6.0f, 5.0f, 2.0f);
             goalRoot.tag = "Finish";
             FinishLine fl = goalRoot.AddComponent<FinishLine>();
-            fl.TargetLevelIndex = trackX > 50f ? 2 : 1;
+            fl.TargetLevelIndex = trackX > 250f ? 4 : (trackX > 150f ? 3 : (trackX > 50f ? 2 : 1));
         }
 
         private static void ApplyProBuilderVertexColor(ProBuilderMesh pb, Color color)
@@ -463,6 +626,19 @@ namespace Vector3D.EditorScripts
 
                 InstantiateDummyPrefab("HumanDummy_M Blue", playerGo.transform, new Color(0.2f, 0.6f, 1.0f));
                 playerGo.AddComponent<PlayerParkourController>();
+            }
+
+            PlayerParkourController controller = playerGo.GetComponent<PlayerParkourController>();
+            if (controller != null)
+            {
+                SerializedObject pSo = new SerializedObject(controller);
+                var impProp = pSo.FindProperty("wallClimbImpulse");
+                if (impProp != null) impProp.floatValue = 9.2f;
+                var gravProp = pSo.FindProperty("wallClimbGravity");
+                if (gravProp != null) gravProp.floatValue = -14.0f;
+                var rangeProp = pSo.FindProperty("wallDetectionRange");
+                if (rangeProp != null) rangeProp.floatValue = 2.85f;
+                pSo.ApplyModifiedProperties();
             }
 
             return playerGo;
@@ -607,7 +783,7 @@ namespace Vector3D.EditorScripts
             }
         }
 
-        private static void SetupGameManager(GameObject level1Root, GameObject level2Root)
+        private static void SetupGameManager(GameObject level1Root, GameObject level2Root, GameObject level3Root, GameObject level4Root)
         {
             GameManager gm = Object.FindFirstObjectByType<GameManager>();
             if (gm == null)
@@ -622,11 +798,17 @@ namespace Vector3D.EditorScripts
             if (p1 != null) p1.objectReferenceValue = level1Root;
             SerializedProperty p2 = so.FindProperty("_level2Root");
             if (p2 != null) p2.objectReferenceValue = level2Root;
+            SerializedProperty p3 = so.FindProperty("_level3Root");
+            if (p3 != null) p3.objectReferenceValue = level3Root;
+            SerializedProperty p4 = so.FindProperty("_level4Root");
+            if (p4 != null) p4.objectReferenceValue = level4Root;
             so.ApplyModifiedProperties();
 
-            // Enforce default level isolation: Level 1 active, Level 2 inactive
+            // Enforce default level isolation: Level 1 active, Level 2, 3, 4 inactive
             if (level1Root != null) level1Root.SetActive(true);
             if (level2Root != null) level2Root.SetActive(false);
+            if (level3Root != null) level3Root.SetActive(false);
+            if (level4Root != null) level4Root.SetActive(false);
         }
 
         private static void BuildUISystem()
@@ -753,7 +935,7 @@ namespace Vector3D.EditorScripts
 
             startPanel.SetActive(true);
 
-            // 2. LEVEL SELECT PANEL (Popup Card 780x520)
+            // 2. LEVEL SELECT PANEL (Popup Card 780x750)
             GameObject levelSelectPanel = new GameObject("LevelSelectPanel", typeof(RectTransform), typeof(Image));
             levelSelectPanel.transform.SetParent(canvasGo.transform, false);
             RectTransform levelSelectRect = levelSelectPanel.GetComponent<RectTransform>();
@@ -761,35 +943,47 @@ namespace Vector3D.EditorScripts
             levelSelectRect.anchorMax = new Vector2(0.5f, 0.5f);
             levelSelectRect.pivot = new Vector2(0.5f, 0.5f);
             levelSelectRect.anchoredPosition = Vector2.zero;
-            levelSelectRect.sizeDelta = new Vector2(780f, 520f);
+            levelSelectRect.sizeDelta = new Vector2(780f, 750f);
 
             Image levelSelectImage = levelSelectPanel.GetComponent<Image>();
             levelSelectImage.color = new Color(0.06f, 0.07f, 0.10f, 0.96f);
 
             CreateText("Header", levelSelectPanel.transform, "SELECT LEVEL", 38, FontStyle.Bold,
                 Color.white, TextAnchor.MiddleCenter,
-                new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(0f, 195f), new Vector2(600f, 55f), builtinFont);
+                new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(0f, 310f), new Vector2(600f, 50f), builtinFont);
 
             CreateText("SubHeader", levelSelectPanel.transform, "CHOOSE A ROOFTOP SECTOR TO DEPLOY", 16, FontStyle.Normal,
                 new Color(0.4f, 0.8f, 1f, 0.85f), TextAnchor.MiddleCenter,
-                new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(0f, 155f), new Vector2(600f, 30f), builtinFont);
+                new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(0f, 275f), new Vector2(600f, 28f), builtinFont);
 
             // Level 1 Card Button
             Button level1Button = CreateLevelCard("Level1Button", levelSelectPanel.transform,
                 "SECTOR 01: ROOFTOPS", "Classic Chase Circuit // Low/High Vaults & Slide Barriers",
                 new Color(0.10f, 0.18f, 0.28f, 0.95f), new Color(0.25f, 0.9f, 1f, 1f),
-                new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(0f, 75f), new Vector2(680f, 95f), builtinFont);
+                new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(0f, 190f), new Vector2(680f, 80f), builtinFont);
 
             // Level 2 Card Button
             Button level2Button = CreateLevelCard("Level2Button", levelSelectPanel.transform,
                 "SECTOR 02: HIGHRISE", "Vertical Hazards // Gap Chasms & Cyan/Orange Wall-Runs",
                 new Color(0.20f, 0.14f, 0.28f, 0.95f), new Color(1f, 0.65f, 0.25f, 1f),
-                new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(0f, -35f), new Vector2(680f, 95f), builtinFont);
+                new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(0f, 100f), new Vector2(680f, 80f), builtinFont);
+
+            // Level 3 Card Button
+            Button level3Button = CreateLevelCard("Level3Button", levelSelectPanel.transform,
+                "SECTOR 03: VERTICAL ASCENT", "Alternate Wall-Jumps // Shift to Engage & A/D Climb",
+                new Color(0.12f, 0.24f, 0.20f, 0.95f), new Color(0.2f, 1f, 0.6f, 1f),
+                new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(0f, 10f), new Vector2(680f, 80f), builtinFont);
+
+            // Level 4 Card Button
+            Button level4Button = CreateLevelCard("Level4Button", levelSelectPanel.transform,
+                "SECTOR 04: THE FINAL RUN", "Full Gauntlet // Abyss Chasm, Opposing Walls & Final Pursuit",
+                new Color(0.28f, 0.12f, 0.18f, 0.95f), new Color(1f, 0.35f, 0.45f, 1f),
+                new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(0f, -80f), new Vector2(680f, 80f), builtinFont);
 
             // Back Button
             Button levelSelectBackButton = CreateButton("BackButton", levelSelectPanel.transform, "< BACK TO MENU", 20,
                 new Color(0.20f, 0.20f, 0.25f, 0.95f), new Color(0.85f, 0.85f, 0.85f, 1f),
-                new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(0f, -165f), new Vector2(280f, 50f), builtinFont);
+                new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(0f, -180f), new Vector2(280f, 50f), builtinFont);
 
             levelSelectPanel.SetActive(false);
 
@@ -865,6 +1059,8 @@ namespace Vector3D.EditorScripts
             so.FindProperty("_startQuitButton").objectReferenceValue = startQuitButton;
             so.FindProperty("_level1Button").objectReferenceValue = level1Button;
             so.FindProperty("_level2Button").objectReferenceValue = level2Button;
+            so.FindProperty("_level3Button").objectReferenceValue = level3Button;
+            so.FindProperty("_level4Button").objectReferenceValue = level4Button;
             so.FindProperty("_levelSelectBackButton").objectReferenceValue = levelSelectBackButton;
             so.FindProperty("_restartButton").objectReferenceValue = restartButton;
             so.FindProperty("_endQuitButton").objectReferenceValue = endQuitButton;
@@ -939,6 +1135,14 @@ namespace Vector3D.EditorScripts
                 if (guids.Length > 0) deathClip = AssetDatabase.LoadAssetAtPath<AudioClip>(AssetDatabase.GUIDToAssetPath(guids[0]));
             }
 
+            AudioClip climbClip = AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/sOUNDS/khoamthanh-kick-bright-medium-504170.mp3");
+            if (climbClip == null) climbClip = AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Sounds/khoamthanh-kick-bright-medium-504170.mp3");
+            if (climbClip == null)
+            {
+                string[] guids = AssetDatabase.FindAssets("t:AudioClip khoamthanh-kick");
+                if (guids.Length > 0) climbClip = AssetDatabase.LoadAssetAtPath<AudioClip>(AssetDatabase.GUIDToAssetPath(guids[0]));
+            }
+
             musicSource.playOnAwake = true;
             musicSource.loop = true;
             musicSource.spatialBlend = 0f; // Pure 2D stereo
@@ -961,6 +1165,7 @@ namespace Vector3D.EditorScripts
             if (bgmClip != null) so.FindProperty("_bgmClip").objectReferenceValue = bgmClip;
             if (deathClip != null) so.FindProperty("_deathClip").objectReferenceValue = deathClip;
             if (clickClip != null) so.FindProperty("_buttonClickClip").objectReferenceValue = clickClip;
+            if (climbClip != null) so.FindProperty("_wallClimbClip").objectReferenceValue = climbClip;
             so.ApplyModifiedProperties();
         }
 

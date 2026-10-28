@@ -27,6 +27,8 @@ namespace Vector3D.UI
         [Header("Level Select Buttons")]
         [SerializeField] private Button _level1Button;
         [SerializeField] private Button _level2Button;
+        [SerializeField] private Button _level3Button;
+        [SerializeField] private Button _level4Button;
         [SerializeField] private Button _levelSelectBackButton;
 
         [Header("End Game Buttons")]
@@ -76,6 +78,18 @@ namespace Vector3D.UI
             {
                 _level2Button.onClick.RemoveAllListeners();
                 _level2Button.onClick.AddListener(() => OnLevelChosen(2));
+            }
+
+            if (_level3Button != null)
+            {
+                _level3Button.onClick.RemoveAllListeners();
+                _level3Button.onClick.AddListener(() => OnLevelChosen(3));
+            }
+
+            if (_level4Button != null)
+            {
+                _level4Button.onClick.RemoveAllListeners();
+                _level4Button.onClick.AddListener(() => OnLevelChosen(4));
             }
 
             if (_levelSelectBackButton != null)
@@ -173,6 +187,38 @@ namespace Vector3D.UI
                     if (_statusSubText != null)
                     {
                         _statusSubText.text = "Rooftops conquered. Prepare for Sector 2 wall runs.";
+                    }
+                    if (_nextLevelButton != null)
+                    {
+                        _nextLevelButton.gameObject.SetActive(true);
+                    }
+                }
+                else if (currentLevel == 2)
+                {
+                    if (_statusHeaderText != null)
+                    {
+                        _statusHeaderText.text = "LEVEL 2 CLEARED!";
+                        _statusHeaderText.color = new Color(0.2f, 0.9f, 0.3f, 1f);
+                    }
+                    if (_statusSubText != null)
+                    {
+                        _statusSubText.text = "Highrise conquered. Prepare for Sector 3 vertical wall jumps.";
+                    }
+                    if (_nextLevelButton != null)
+                    {
+                        _nextLevelButton.gameObject.SetActive(true);
+                    }
+                }
+                else if (currentLevel == 3)
+                {
+                    if (_statusHeaderText != null)
+                    {
+                        _statusHeaderText.text = "LEVEL 3 CLEARED!";
+                        _statusHeaderText.color = new Color(0.2f, 0.9f, 0.3f, 1f);
+                    }
+                    if (_statusSubText != null)
+                    {
+                        _statusSubText.text = "Vertical gauntlet scaled! Prepare for Sector 4: The Final Parkour Challenge.";
                     }
                     if (_nextLevelButton != null)
                     {

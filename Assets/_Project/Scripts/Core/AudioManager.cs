@@ -30,6 +30,7 @@ namespace Vector3D.Core
         [SerializeField] private AudioClip _bgmClip;
         [SerializeField] private AudioClip _deathClip;
         [SerializeField] private AudioClip _buttonClickClip;
+        [SerializeField] private AudioClip _wallClimbClip;
 
         [Header("Volume Settings")]
         [Range(0f, 1f)] [SerializeField] private float _musicVolume = 0.5f;
@@ -165,6 +166,21 @@ namespace Vector3D.Core
             if (_sfxSource != null && _buttonClickClip != null)
             {
                 _sfxSource.PlayOneShot(_buttonClickClip, _sfxVolume);
+            }
+        }
+
+        /// <summary>
+        /// Plays a punchy tactile parkour kick sound effect when scaling height along a wall.
+        /// </summary>
+        public void PlayWallClimbSound()
+        {
+            if (_sfxSource == null) EnsureAudioSources();
+
+            if (_sfxSource != null && _wallClimbClip != null)
+            {
+                _sfxSource.pitch = Random.Range(1.05f, 1.25f);
+                _sfxSource.PlayOneShot(_wallClimbClip, _sfxVolume * 0.75f);
+                _sfxSource.pitch = 1.0f;
             }
         }
 

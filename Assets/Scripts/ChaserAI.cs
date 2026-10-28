@@ -302,6 +302,38 @@ namespace VectorParkour
                     isTraversingGap = false;
                 }
             }
+            else if ((_trackCenterX > 250f && transform.position.z >= 86f && transform.position.z <= 130f) ||
+                     (_trackCenterX > 150f && _trackCenterX < 250f && transform.position.z >= 62f && transform.position.z <= 108f))
+            {
+                // Vertical Shaft (Level 3 or 4): controlled climbing pursuit behind player
+                float targetY = (targetPlayer != null) ? Mathf.Clamp(targetPlayer.position.y - 0.4f, 0.5f, 6.1f) : 6.1f;
+                float newY = Mathf.MoveTowards(transform.position.y, targetY, 5.0f * dt);
+                verticalVelocity = 0f;
+                float stepY = newY - transform.position.y;
+
+                float climbDampedX = Mathf.SmoothDamp(transform.position.x, _trackCenterX, ref lateralVelocity, 0.12f);
+                float climbLateralStep = climbDampedX - transform.position.x;
+
+                Vector3 climbStep = new Vector3(climbLateralStep, stepY, currentSpeed * dt);
+                characterController.Move(climbStep);
+                return;
+            }
+            else if ((_trackCenterX > 250f && transform.position.z >= 178f && transform.position.z <= 192f && transform.position.y > 1.2f) ||
+                     (_trackCenterX > 150f && _trackCenterX < 250f && transform.position.z >= 168f && transform.position.z <= 182f && transform.position.y > 1.2f))
+            {
+                // Rooftop Drop (Level 3 or 4): smooth descent to ground landing platform
+                float targetDropY = (targetPlayer != null) ? targetPlayer.position.y : 0.5f;
+                float newDropY = Mathf.MoveTowards(transform.position.y, targetDropY, 9.0f * dt);
+                verticalVelocity = 0f;
+                float stepY = newDropY - transform.position.y;
+
+                float dropDampedX = Mathf.SmoothDamp(transform.position.x, _trackCenterX, ref lateralVelocity, 0.12f);
+                float dropLateralStep = dropDampedX - transform.position.x;
+
+                Vector3 dropStep = new Vector3(dropLateralStep, stepY, currentSpeed * dt);
+                characterController.Move(dropStep);
+                return;
+            }
             else
             {
                 if (characterController.isGrounded)
@@ -331,6 +363,8 @@ namespace VectorParkour
         private void DetectAndHandleObstaclesAhead()
         {
             if (isVaulting || isTraversingGap) return;
+            if (_trackCenterX > 250f && transform.position.z >= 84f && transform.position.z <= 130f) return;
+            if (_trackCenterX > 150f && _trackCenterX < 250f && transform.position.z >= 60f && transform.position.z <= 108f) return;
 
             Vector3 originWaist = transform.position + Vector3.up * 0.7f;
             Vector3 originHead = transform.position + Vector3.up * 1.6f;
