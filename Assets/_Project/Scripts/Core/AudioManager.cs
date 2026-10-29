@@ -38,6 +38,8 @@ namespace Vector3D.Core
         [Range(0f, 1f)] [SerializeField] private float _sfxVolume = 0.85f;
 
         private float _lastDeathSoundTime = -999f;
+        private float _lastWallClimbSoundTime = -999f;
+        private const float WallClimbSoundCooldown = 0.18f;
 
         private void Awake()
         {
@@ -171,9 +173,13 @@ namespace Vector3D.Core
 
         /// <summary>
         /// Plays a punchy tactile parkour kick sound effect when scaling height along a wall.
+        /// Throttled by cooldown to prevent audio clipping / distortion on rapid inputs.
         /// </summary>
         public void PlayWallClimbSound()
         {
+            if (Time.unscaledTime - _lastWallClimbSoundTime < WallClimbSoundCooldown) return;
+            _lastWallClimbSoundTime = Time.unscaledTime;
+
             if (_sfxSource == null) EnsureAudioSources();
 
             if (_sfxSource != null && _wallClimbClip != null)

@@ -9,7 +9,9 @@ namespace VectorParkour
     /// <summary>
     /// The Chaser AI (Hunter/Enforcer) inspired by Vector.
     /// Dynamically rubber-bands behind the player, surges forward when the player stumbles,
-    /// autonomously vaults/slides/traverses chasms, and triggers Game Over upon catching the runner.
+    /// autonomously vaults/slides/traverses chasms with physically coherent airborne gravity,
+    /// climbs vertical shafts using valid wall contact without mid-air levitation,
+    /// and triggers Game Over upon catching the runner.
     /// </summary>
     [RequireComponent(typeof(CharacterController))]
     public class ChaserAI : MonoBehaviour
@@ -25,16 +27,42 @@ namespace VectorParkour
         [SerializeField] private float detectionRange = 2.6f;
         [SerializeField] private float jumpForce = 9.2f;
         [SerializeField] private float gravity = -24f;
-        [SerializeField] private float vaultDuration = 0.28f;
+        [SerializeField] private float vaultDuration = 0.35f;
         [SerializeField] private float slideDuration = 0.65f;
 
         [Header("References")]
         [SerializeField] private Transform visualRoot;
 
+        // Traversal Zone Integration
+        private TraversalZone currentTraversalZone = null;
+        public TraversalZone CurrentTraversalZone => currentTraversalZone;
+
+        public void OnEnterTraversalZone(TraversalZone zone)
+        {
+            currentTraversalZone = zone;
+        }
+
+        public void OnExitTraversalZone(TraversalZone zone)
+        {
+            if (currentTraversalZone == zone)
+            {
+                currentTraversalZone = null;
+            }
+        }
+
         // Cached Animator Hashes
         private static readonly int AnimIsJumping = Animator.StringToHash("IsJumping");
         private static readonly int AnimIsSliding = Animator.StringToHash("IsSliding");
         private static readonly int AnimIsVaulting = Animator.StringToHash("IsVaulting");
+        private static readonly int AnimVaultType = Animator.StringToHash("VaultType");
+        private static readonly int AnimIsFalling = Animator.StringToHash("IsFalling");
+        private static readonly int AnimIsWallRunning = Animator.StringToHash("IsWallRunning");
+        private static readonly int AnimIsGrounded = Animator.StringToHash("IsGrounded");
+
+        private bool hasAnimVaultType = false;
+        private bool hasAnimFalling = false;
+        private bool hasAnimWallRunning = false;
+        private bool hasAnimGrounded = false;
 
         private CharacterController characterController;
         private PlayerParkourController playerController;
@@ -52,6 +80,8 @@ namespace VectorParkour
         private bool isVaulting = false;
         private bool isSliding = false;
         private bool isTraversingGap = false;
+        private bool isWallClimbing = false;
+        private int wallSide = -1;
         private float vaultTimer = 0f;
         private float slideTimer = 0f;
         private float gapTraverseTimer = 0f;
@@ -65,7 +95,9 @@ namespace VectorParkour
         // Airborne tracking & debounce
         private bool isAIJumping = false;
         private float airborneTimer = 0f;
-        public bool IsJumping => isAIJumping || (airborneTimer > 0.15f && !isVaulting && !isTraversingGap);
+
+        // Airborne jump continuity: is jumping when launched or airborne during jump / gap / fall
+        public bool IsJumping => isAIJumping || isTraversingGap || (airborneTimer > 0.12f && !isVaulting && !isSliding);
 
         private float settleTimer = 0f;
 
@@ -110,6 +142,17 @@ namespace VectorParkour
             }
 
             animator = GetComponentInChildren<Animator>();
+            if (animator != null)
+            {
+                foreach (var param in animator.parameters)
+                {
+                    if (param.nameHash == AnimVaultType) hasAnimVaultType = true;
+                    if (param.nameHash == AnimIsFalling) hasAnimFalling = true;
+                    if (param.nameHash == AnimIsWallRunning) hasAnimWallRunning = true;
+                    if (param.nameHash == AnimIsGrounded) hasAnimGrounded = true;
+                }
+            }
+
             componentsInitialized = true;
         }
 
@@ -140,7 +183,7 @@ namespace VectorParkour
         {
             if (targetPlayer == null)
             {
-                PlayerParkourController pc = UnityEngine.Object.FindFirstObjectByType<PlayerParkourController>();
+                PlayerParkourController pc = Object.FindFirstObjectByType<PlayerParkourController>();
                 if (pc != null)
                 {
                     targetPlayer = pc.transform;
@@ -168,15 +211,17 @@ namespace VectorParkour
                 return;
             }
 
-            if (hasCaughtPlayer || (playerController != null && playerController.HasCompletedLevel))
-            {
-                CheckRestartInput();
-                return;
-            }
+            settleTimer += Time.deltaTime;
 
+            CheckRestartInput();
             CheckPlayerTrackConditions();
 
-            settleTimer += Time.deltaTime;
+            if (hasCaughtPlayer)
+            {
+                currentSpeed = Mathf.MoveTowards(currentSpeed, 0f, 15f * Time.deltaTime);
+                UpdateAnimator();
+                return;
+            }
 
             UpdateAI();
             UpdateVisualFeedback();
@@ -243,10 +288,7 @@ namespace VectorParkour
             currentSpeed = Mathf.MoveTowards(currentSpeed, targetSpeed, rubberBandAccSpeed * dt);
 
             // Obstacle anticipation & handling
-            if (characterController.isGrounded && !isTraversingGap)
-            {
-                DetectAndHandleObstaclesAhead();
-            }
+            DetectAndHandleObstaclesAhead();
 
             // Smooth Vault Interpolation
             if (isVaulting)
@@ -283,59 +325,95 @@ namespace VectorParkour
                 }
             }
 
-            // Gap Traversal mode (Level 2 wide chasms & wall-run sections)
+            // Gap Traversal mode: Genuine airborne parabolic movement with gravity
             if (isTraversingGap)
             {
                 gapTraverseTimer += dt;
-                verticalVelocity = 0f;
+                airborneTimer += dt;
+                verticalVelocity += gravity * dt;
+                verticalVelocity = Mathf.Max(verticalVelocity, -28f);
 
                 Vector3 downProbe = transform.position + Vector3.up * 0.5f;
-                bool reachedLanding = Physics.Raycast(downProbe, Vector3.down, out RaycastHit groundHit, 1.6f, ~0, QueryTriggerInteraction.Ignore) && groundHit.point.y > -0.5f;
+                bool reachedLanding = Physics.Raycast(downProbe, Vector3.down, out RaycastHit groundHit, 1.4f, ~0, QueryTriggerInteraction.Ignore) && groundHit.point.y > -0.5f;
 
-                if (reachedLanding && gapTraverseTimer > 0.4f)
+                if (reachedLanding || (characterController.isGrounded && gapTraverseTimer > 0.15f))
                 {
                     isTraversingGap = false;
+                    isAIJumping = false;
                     verticalVelocity = -1.2f;
+                    airborneTimer = 0f;
+                    // Check for obstacles immediately upon landing (no 0.4s lockout!)
+                    DetectAndHandleObstaclesAhead();
                 }
-                else if (gapTraverseTimer > 4.0f)
+                else if (gapTraverseTimer > 3.5f)
                 {
                     isTraversingGap = false;
+                    isAIJumping = false;
                 }
             }
-            else if ((_trackCenterX > 250f && transform.position.z >= 86f && transform.position.z <= 130f) ||
-                     (_trackCenterX > 150f && _trackCenterX < 250f && transform.position.z >= 62f && transform.position.z <= 108f))
+            else if ((currentTraversalZone != null && currentTraversalZone.ZoneType == TraversalZoneType.VerticalShaft) ||
+                     CheckIsBetweenBothWalls())
             {
-                // Vertical Shaft (Level 3 or 4): controlled climbing pursuit behind player
-                float targetY = (targetPlayer != null) ? Mathf.Clamp(targetPlayer.position.y - 0.4f, 0.5f, 6.1f) : 6.1f;
-                float newY = Mathf.MoveTowards(transform.position.y, targetY, 5.0f * dt);
-                verticalVelocity = 0f;
-                float stepY = newY - transform.position.y;
+                // Vertical Shaft Traversal: Uses valid wall contact & climbing physics along wall geometry
+                isWallClimbing = true;
+                isAIJumping = false;
+                isTraversingGap = false;
 
-                float climbDampedX = Mathf.SmoothDamp(transform.position.x, _trackCenterX, ref lateralVelocity, 0.12f);
+                float targetY = (currentTraversalZone != null && currentTraversalZone.TargetElevation > 0f) ? currentTraversalZone.TargetElevation : 6.0f;
+                if (targetPlayer != null && targetPlayer.position.y > transform.position.y)
+                {
+                    targetY = Mathf.Min(targetY, targetPlayer.position.y);
+                }
+
+                // If Chaser has reached the top platform level, transition cleanly onto the upper floor
+                if (transform.position.y >= targetY - 0.25f)
+                {
+                    isWallClimbing = false;
+                    verticalVelocity = -1.2f;
+                    float newX = Mathf.SmoothDamp(transform.position.x, _trackCenterX, ref lateralVelocity, 0.12f);
+                    float stepX = newX - transform.position.x;
+                    Vector3 moveOnTop = new Vector3(stepX, -1.2f * dt, currentSpeed * dt);
+                    characterController.Move(moveOnTop);
+                    return;
+                }
+
+                // Attach to wall surface (flanking wall at distance ~1.28m from center)
+                float wallFaceX = wallSide == -1 ? (_trackCenterX - 1.28f) : (_trackCenterX + 1.28f);
+                float climbDampedX = Mathf.SmoothDamp(transform.position.x, wallFaceX, ref lateralVelocity, 0.12f);
                 float climbLateralStep = climbDampedX - transform.position.x;
+
+                // Believable climbing velocity along the wall
+                float climbSpeed = 5.2f;
+                float stepY = climbSpeed * dt;
 
                 Vector3 climbStep = new Vector3(climbLateralStep, stepY, currentSpeed * dt);
                 characterController.Move(climbStep);
                 return;
             }
-            else if ((_trackCenterX > 250f && transform.position.z >= 178f && transform.position.z <= 192f && transform.position.y > 1.2f) ||
-                     (_trackCenterX > 150f && _trackCenterX < 250f && transform.position.z >= 168f && transform.position.z <= 182f && transform.position.y > 1.2f))
+            else if ((currentTraversalZone != null && currentTraversalZone.ZoneType == TraversalZoneType.RooftopDrop) && transform.position.y > 1.2f)
             {
-                // Rooftop Drop (Level 3 or 4): smooth descent to ground landing platform
-                float targetDropY = (targetPlayer != null) ? targetPlayer.position.y : 0.5f;
-                float newDropY = Mathf.MoveTowards(transform.position.y, targetDropY, 9.0f * dt);
-                verticalVelocity = 0f;
-                float stepY = newDropY - transform.position.y;
+                // Rooftop Drop: physically coherent gravitational descent to lower platform
+                isWallClimbing = false;
+                airborneTimer += dt;
+                verticalVelocity += gravity * dt;
+                verticalVelocity = Mathf.Max(verticalVelocity, -28f);
 
                 float dropDampedX = Mathf.SmoothDamp(transform.position.x, _trackCenterX, ref lateralVelocity, 0.12f);
                 float dropLateralStep = dropDampedX - transform.position.x;
 
-                Vector3 dropStep = new Vector3(dropLateralStep, stepY, currentSpeed * dt);
+                Vector3 dropStep = new Vector3(dropLateralStep, verticalVelocity * dt, currentSpeed * dt);
                 characterController.Move(dropStep);
+
+                if (characterController.isGrounded && transform.position.y < 1.5f)
+                {
+                    verticalVelocity = -1.2f;
+                    airborneTimer = 0f;
+                }
                 return;
             }
             else
             {
+                isWallClimbing = false;
                 if (characterController.isGrounded)
                 {
                     airborneTimer = 0f;
@@ -360,11 +438,26 @@ namespace VectorParkour
             characterController.Move(moveStep);
         }
 
+        private bool CheckIsBetweenBothWalls(float probeDistance = 4.2f)
+        {
+            Vector3 origin = transform.position + Vector3.up * 1.0f;
+            bool hasLeft = Physics.Raycast(origin, -Vector3.right, out RaycastHit hitLeft, probeDistance, ~0, QueryTriggerInteraction.Ignore) &&
+                           IsWallRunObstacle(hitLeft.collider);
+            bool hasRight = Physics.Raycast(origin, Vector3.right, out RaycastHit hitRight, probeDistance, ~0, QueryTriggerInteraction.Ignore) &&
+                            IsWallRunObstacle(hitRight.collider);
+            return hasLeft && hasRight;
+        }
+
+        private bool IsWallRunObstacle(Collider col)
+        {
+            if (col == null) return false;
+            return col.CompareTag("WallRunObstacle") || col.gameObject.name.Contains("WallRun");
+        }
+
         private void DetectAndHandleObstaclesAhead()
         {
-            if (isVaulting || isTraversingGap) return;
-            if (_trackCenterX > 250f && transform.position.z >= 84f && transform.position.z <= 130f) return;
-            if (_trackCenterX > 150f && _trackCenterX < 250f && transform.position.z >= 60f && transform.position.z <= 108f) return;
+            if (isVaulting) return;
+            if (isWallClimbing) return;
 
             Vector3 originWaist = transform.position + Vector3.up * 0.7f;
             Vector3 originHead = transform.position + Vector3.up * 1.6f;
@@ -379,8 +472,8 @@ namespace VectorParkour
                 }
             }
 
-            // 2. Check for SlideBarrier ahead
-            if (Physics.Raycast(originHead, Vector3.forward, out RaycastHit hitHead, detectionRange, ~0, QueryTriggerInteraction.Collide))
+            // 2. Check for SlideBarrier ahead (with increased lookahead to anticipate landing)
+            if (Physics.Raycast(originHead, Vector3.forward, out RaycastHit hitHead, detectionRange + 0.8f, ~0, QueryTriggerInteraction.Collide))
             {
                 if (hitHead.collider.CompareTag("Obstacle_Slide") && !isSliding)
                 {
@@ -390,26 +483,19 @@ namespace VectorParkour
             }
 
             // 3. Check for Gaps in floor ahead
-            Vector3 gapCheck1 = transform.position + Vector3.forward * 1.8f + Vector3.up * 0.3f;
-            Vector3 gapCheck2 = transform.position + Vector3.forward * 3.5f + Vector3.up * 0.3f;
-
-            bool floor1 = Physics.Raycast(gapCheck1, Vector3.down, 2.0f, ~0, QueryTriggerInteraction.Ignore);
-            bool floor2 = Physics.Raycast(gapCheck2, Vector3.down, 2.0f, ~0, QueryTriggerInteraction.Ignore);
-
-            if (!floor1 && !floor2)
+            if (!isTraversingGap && characterController.isGrounded)
             {
-                Vector3 farCheck = transform.position + Vector3.forward * 6.5f + Vector3.up * 0.3f;
-                bool floorFar = Physics.Raycast(farCheck, Vector3.down, 3.0f, ~0, QueryTriggerInteraction.Ignore);
+                Vector3 gapCheck1 = transform.position + Vector3.forward * 1.8f + Vector3.up * 0.3f;
+                Vector3 gapCheck2 = transform.position + Vector3.forward * 3.5f + Vector3.up * 0.3f;
 
-                if (!floorFar)
-                {
-                    isTraversingGap = true;
-                    gapTraverseTimer = 0f;
-                    verticalVelocity = 0f;
-                }
-                else
+                bool floor1 = Physics.Raycast(gapCheck1, Vector3.down, 2.0f, ~0, QueryTriggerInteraction.Ignore);
+                bool floor2 = Physics.Raycast(gapCheck2, Vector3.down, 2.0f, ~0, QueryTriggerInteraction.Ignore);
+
+                if (!floor1 && !floor2)
                 {
                     isAIJumping = true;
+                    isTraversingGap = true;
+                    gapTraverseTimer = 0f;
                     verticalVelocity = jumpForce;
                 }
             }
@@ -475,6 +561,7 @@ namespace VectorParkour
                 lateralVelocity = 0f;
                 currentSpeed = playerController != null ? playerController.CurrentSpeed : 9.5f;
                 isTraversingGap = false;
+                isAIJumping = false;
             }
         }
 
@@ -486,6 +573,7 @@ namespace VectorParkour
             isVaulting = false;
             isSliding = false;
             isTraversingGap = false;
+            isWallClimbing = false;
             creepOffset = 0f;
 
             if (characterController != null)
@@ -549,34 +637,43 @@ namespace VectorParkour
         {
             if (visualRoot == null || visualRoot == transform) return;
 
+            float dt = Time.deltaTime > 0f ? Time.deltaTime : Time.unscaledDeltaTime;
+            float smoothFactor = 1f - Mathf.Exp(-14f * dt);
+
             if (animator != null)
             {
                 visualRoot.localScale = defaultVisualScale;
                 visualRoot.localPosition = defaultVisualLocalPos;
-                visualRoot.localRotation = Quaternion.identity;
+
+                Quaternion targetRot = Quaternion.identity;
+                if (isWallClimbing)
+                {
+                    float targetZAngle = wallSide == -1 ? -18f : 18f;
+                    targetRot = Quaternion.Euler(0f, 0f, targetZAngle);
+                }
+
+                visualRoot.localRotation = Quaternion.Slerp(visualRoot.localRotation, targetRot, smoothFactor);
                 return;
             }
 
-            float smoothFactor = 1f - Mathf.Exp(-14f * Time.deltaTime);
-
             Vector3 targetScale = defaultVisualScale;
             Vector3 targetPos = defaultVisualLocalPos;
-            Quaternion targetRot = Quaternion.Euler(10f, 0f, 0f);
+            Quaternion nonAnimRot = Quaternion.Euler(10f, 0f, 0f);
 
             if (isSliding)
             {
                 targetScale = new Vector3(defaultVisualScale.x, defaultVisualScale.y * 0.5f, defaultVisualScale.z * 1.25f);
-                targetRot = Quaternion.Euler(-18f, 0f, 0f);
+                nonAnimRot = Quaternion.Euler(-18f, 0f, 0f);
             }
             else if (isVaulting)
             {
                 targetPos = new Vector3(defaultVisualLocalPos.x, 0.2f, defaultVisualLocalPos.z + 0.1f);
-                targetRot = Quaternion.Euler(22f, 0f, 0f);
+                nonAnimRot = Quaternion.Euler(22f, 0f, 0f);
             }
 
             visualRoot.localScale = Vector3.Lerp(visualRoot.localScale, targetScale, smoothFactor);
             visualRoot.localPosition = Vector3.Lerp(visualRoot.localPosition, targetPos, smoothFactor);
-            visualRoot.localRotation = Quaternion.Slerp(visualRoot.localRotation, targetRot, smoothFactor);
+            visualRoot.localRotation = Quaternion.Slerp(visualRoot.localRotation, nonAnimRot, smoothFactor);
         }
 
         private void UpdateAnimator()
@@ -585,6 +682,10 @@ namespace VectorParkour
             animator.SetBool(AnimIsJumping, IsJumping);
             animator.SetBool(AnimIsSliding, isSliding);
             animator.SetBool(AnimIsVaulting, isVaulting);
+            if (hasAnimVaultType) animator.SetInteger(AnimVaultType, isVaulting ? 3 : 0);
+            if (hasAnimFalling) animator.SetBool(AnimIsFalling, !characterController.isGrounded && verticalVelocity < -2f);
+            if (hasAnimWallRunning) animator.SetBool(AnimIsWallRunning, isWallClimbing);
+            if (hasAnimGrounded) animator.SetBool(AnimIsGrounded, characterController != null && characterController.isGrounded);
         }
     }
 }

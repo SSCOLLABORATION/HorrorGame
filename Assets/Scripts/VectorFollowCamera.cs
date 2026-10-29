@@ -1,4 +1,5 @@
 using UnityEngine;
+using Vector3D.Core;
 
 namespace VectorParkour
 {
@@ -11,9 +12,9 @@ namespace VectorParkour
 
     /// <summary>
     /// 3D side-angled chase camera inspired by Vector.
-    /// Features zero-GC non-alloc occlusion checks, rock-solid Z lockstep,
-    /// SmoothDamp X/Y tracking, frame-rate independent transitions,
-    /// and contextual overhead/top-down follow view when between both walls.
+    /// Features zero-GC non-alloc occlusion checks, 3-axis smooth damping (X, Y, Z),
+    /// collision push-in to eliminate geometry clipping through slide barriers & pillars,
+    /// robust hysteresis for overhead corridor view, and frame-rate independent transitions.
     /// </summary>
     [RequireComponent(typeof(Camera))]
     public class VectorFollowCamera : MonoBehaviour
@@ -39,12 +40,15 @@ namespace VectorParkour
         [Header("Occlusion & Side Transition")]
         [SerializeField] private float sideTransitionSpeed = 6.0f;
         [SerializeField] private float minSideDuration = 0.35f;
-        [SerializeField] private float sphereCastRadius = 0.25f;
+        [SerializeField] private float sphereCastRadius = 0.35f;
+        [SerializeField] private float nearClipMargin = 0.30f;
+        [SerializeField] private float minCameraDistance = 1.6f;
         [SerializeField] private LayerMask occlusionMask = ~0;
 
         [Header("Damping Parameters")]
         [SerializeField] private float smoothTimeX = 0.06f; // Smooths lateral wall-run shifts
         [SerializeField] private float smoothTimeY = 0.08f; // Smooths vertical jump arcs
+        [SerializeField] private float smoothTimeZ = 0.06f; // Smooths longitudinal transitions (overhead / side switches)
 
         [Header("Dynamic FOV")]
         [SerializeField] private float baseFOV = 50.0f;
@@ -57,14 +61,21 @@ namespace VectorParkour
         private PlayerParkourController playerController;
         private float velocityX = 0f;
         private float velocityY = 0f;
+        private float velocityZ = 0f;
 
         private CameraSide currentSide = CameraSide.DefaultLeft;
         private Vector3 currentOffset = new Vector3(-3.4f, 1.9f, -4.2f);
         private Vector3 currentEulerAngle = new Vector3(9.0f, 24.0f, 0.0f);
         private float timeSinceSideSwitch = 0f;
 
+        // Overhead debounce / hysteresis timers
+        private float betweenWallsTimer = 0f;
+        private float outsideWallsTimer = 0f;
+        private const float OverheadEntryThreshold = 0.15f;
+        private const float OverheadExitThreshold = 0.25f;
+
         // Pre-allocated raycast buffer to avoid per-frame garbage collection spikes
-        private readonly RaycastHit[] occlusionHits = new RaycastHit[12];
+        private readonly RaycastHit[] occlusionHits = new RaycastHit[16];
 
         public CameraSide CurrentSide => currentSide;
         public Vector3 CurrentOffset => currentOffset;
@@ -143,8 +154,11 @@ namespace VectorParkour
             currentOffset = defaultOffset;
             currentEulerAngle = defaultEulerAngle;
             timeSinceSideSwitch = 0f;
+            betweenWallsTimer = 0f;
+            outsideWallsTimer = 0f;
             velocityX = 0f;
             velocityY = 0f;
+            velocityZ = 0f;
 
             transform.position = target.position + currentOffset;
             transform.rotation = Quaternion.Euler(currentEulerAngle);
@@ -153,23 +167,27 @@ namespace VectorParkour
             if (cam != null) cam.fieldOfView = baseFOV;
         }
 
-        private bool IsDefaultViewObstructed()
+        private Vector3 GetPlayerFocusPoint()
+        {
+            return target != null ? target.position + Vector3.up * 1.35f : Vector3.zero;
+        }
+
+        /// <summary>
+        /// Validates whether a candidate offset line-of-sight from focus point to camera is obstructed.
+        /// Performs sphere cast from character outwards to camera position.
+        /// </summary>
+        public bool IsCandidateObstructed(Vector3 candidateOffset)
         {
             if (target == null) return false;
 
-            if (playerController != null && playerController.IsWallRunning && playerController.WallSide == -1)
-            {
-                return true;
-            }
+            Vector3 focusPoint = GetPlayerFocusPoint();
+            Vector3 candidateCamPos = target.position + candidateOffset;
+            Vector3 toCam = candidateCamPos - focusPoint;
+            float distance = toCam.magnitude;
 
-            Vector3 focusPoint = target.position + Vector3.up * 1.35f;
-            Vector3 candidateCamPos = target.position + defaultOffset;
-            Vector3 toFocus = focusPoint - candidateCamPos;
-            float distance = toFocus.magnitude;
+            if (distance <= 0.05f) return false;
 
-            if (distance <= 0.01f) return false;
-
-            Ray ray = new Ray(candidateCamPos, toFocus / distance);
+            Ray ray = new Ray(focusPoint, toCam / distance);
             int hitCount = Physics.SphereCastNonAlloc(ray, sphereCastRadius, occlusionHits, distance, occlusionMask, QueryTriggerInteraction.Ignore);
 
             for (int i = 0; i < hitCount; i++)
@@ -185,10 +203,23 @@ namespace VectorParkour
             return false;
         }
 
+        private bool IsDefaultViewObstructed()
+        {
+            if (target == null) return false;
+
+            if (playerController != null && playerController.IsWallRunning && playerController.WallSide == -1)
+            {
+                return true;
+            }
+
+            return IsCandidateObstructed(defaultOffset);
+        }
+
         public bool IsBetweenBothWalls()
         {
             if (playerController != null)
             {
+                if (playerController.IsInVerticalShaft) return true;
                 return playerController.IsBetweenWalls;
             }
 
@@ -213,30 +244,62 @@ namespace VectorParkour
             timeSinceSideSwitch += dt;
 
             bool betweenBothWalls = IsBetweenBothWalls();
-            CameraSide desiredSide = currentSide;
 
+            // Apply debounce/hysteresis so entering or exiting corridor doesn't oscillate
             if (betweenBothWalls)
             {
-                // Core Requirement: Switch to overhead/top-down follow angle when between both walls
-                desiredSide = CameraSide.OverheadTop;
+                betweenWallsTimer += dt;
+                outsideWallsTimer = 0f;
             }
             else
             {
-                bool defaultBlocked = IsDefaultViewObstructed();
-                if (defaultBlocked)
+                outsideWallsTimer += dt;
+                betweenWallsTimer = 0f;
+            }
+
+            CameraSide desiredSide = currentSide;
+
+            if (currentSide == CameraSide.OverheadTop)
+            {
+                if (outsideWallsTimer >= OverheadExitThreshold && timeSinceSideSwitch >= minSideDuration)
                 {
-                    desiredSide = CameraSide.AlternateRight;
+                    desiredSide = CameraSide.DefaultLeft;
                 }
-                else if (currentSide == CameraSide.AlternateRight || currentSide == CameraSide.OverheadTop)
+            }
+            else
+            {
+                if (betweenWallsTimer >= OverheadEntryThreshold)
                 {
-                    if (timeSinceSideSwitch >= minSideDuration)
-                    {
-                        desiredSide = CameraSide.DefaultLeft;
-                    }
+                    desiredSide = CameraSide.OverheadTop;
                 }
                 else
                 {
-                    desiredSide = CameraSide.DefaultLeft;
+                    bool defaultBlocked = IsDefaultViewObstructed();
+                    if (defaultBlocked)
+                    {
+                        // Only switch to alternate side if alternate side is actually CLEAR!
+                        bool altBlocked = IsCandidateObstructed(alternateOffset);
+                        if (!altBlocked)
+                        {
+                            desiredSide = CameraSide.AlternateRight;
+                        }
+                        else
+                        {
+                            // If both sides are blocked (e.g. narrow pillars), remain on default side and let collision pull-in handle it
+                            desiredSide = CameraSide.DefaultLeft;
+                        }
+                    }
+                    else if (currentSide == CameraSide.AlternateRight)
+                    {
+                        if (timeSinceSideSwitch >= minSideDuration)
+                        {
+                            desiredSide = CameraSide.DefaultLeft;
+                        }
+                    }
+                    else
+                    {
+                        desiredSide = CameraSide.DefaultLeft;
+                    }
                 }
             }
 
@@ -255,7 +318,12 @@ namespace VectorParkour
                 if (target == null) return;
             }
 
-            // Use deltaTime during active gameplay to match CharacterController interpolation, unscaled when paused
+            // Do not drift or oscillate if game is paused/frozen
+            if (Time.timeScale <= 0f && GameManager.Instance != null && GameManager.Instance.CurrentState != GameState.Playing)
+            {
+                return;
+            }
+
             float dt = Time.timeScale > 0f ? Time.deltaTime : Time.unscaledDeltaTime;
             if (dt <= 0f) return;
 
@@ -281,7 +349,7 @@ namespace VectorParkour
                     break;
             }
 
-            // Frame-rate independent exponential smoothing
+            // Frame-rate independent exponential smoothing of offsets and angles
             float activeTransitionSpeed = (currentSide == CameraSide.OverheadTop) ? overheadTransitionSpeed : sideTransitionSpeed;
             float lerpFactor = 1f - Mathf.Exp(-activeTransitionSpeed * dt);
 
@@ -292,12 +360,44 @@ namespace VectorParkour
                 Mathf.LerpAngle(currentEulerAngle.z, targetSideEuler.z, lerpFactor)
             );
 
-            Vector3 targetPos = target.position + currentOffset;
+            // Compute ideal unoccluded target position
+            Vector3 focusPoint = GetPlayerFocusPoint();
+            Vector3 desiredCamPos = target.position + currentOffset;
 
-            // Lockstep Z for zero forward jitter, SmoothDamp X and Y for fluid lateral & vertical motion
-            float posZ = targetPos.z;
-            float posX = Mathf.SmoothDamp(transform.position.x, targetPos.x, ref velocityX, smoothTimeX, Mathf.Infinity, dt);
-            float posY = Mathf.SmoothDamp(transform.position.y, targetPos.y, ref velocityY, smoothTimeY, Mathf.Infinity, dt);
+            // Geometry collision check & controlled pull-in (prevents camera clipping through slide barriers & pillars)
+            Vector3 toCam = desiredCamPos - focusPoint;
+            float desiredDistance = toCam.magnitude;
+            if (desiredDistance > 0.1f)
+            {
+                Vector3 camDir = toCam / desiredDistance;
+                Ray ray = new Ray(focusPoint, camDir);
+                int hitCount = Physics.SphereCastNonAlloc(ray, sphereCastRadius, occlusionHits, desiredDistance, occlusionMask, QueryTriggerInteraction.Ignore);
+
+                float nearestDist = desiredDistance;
+                for (int i = 0; i < hitCount; i++)
+                {
+                    Transform hitT = occlusionHits[i].transform;
+                    if (hitT == null) continue;
+                    if (hitT == target || hitT.IsChildOf(target)) continue;
+                    if (chaser != null && (hitT == chaser || hitT.IsChildOf(chaser))) continue;
+
+                    if (occlusionHits[i].distance < nearestDist)
+                    {
+                        nearestDist = occlusionHits[i].distance;
+                    }
+                }
+
+                if (nearestDist < desiredDistance)
+                {
+                    float safeDist = Mathf.Max(minCameraDistance, nearestDist - nearClipMargin);
+                    desiredCamPos = focusPoint + camDir * safeDist;
+                }
+            }
+
+            // Coherent 3-axis SmoothDamp (X, Y, Z) eliminates any Z snapping during side or overhead transitions
+            float posX = Mathf.SmoothDamp(transform.position.x, desiredCamPos.x, ref velocityX, smoothTimeX, Mathf.Infinity, dt);
+            float posY = Mathf.SmoothDamp(transform.position.y, desiredCamPos.y, ref velocityY, smoothTimeY, Mathf.Infinity, dt);
+            float posZ = Mathf.SmoothDamp(transform.position.z, desiredCamPos.z, ref velocityZ, smoothTimeZ, Mathf.Infinity, dt);
 
             transform.position = new Vector3(posX, posY, posZ);
             transform.rotation = Quaternion.Euler(currentEulerAngle);

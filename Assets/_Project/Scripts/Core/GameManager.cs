@@ -59,23 +59,52 @@ namespace Vector3D.Core
         public static readonly Vector3 Level4PlayerSpawn = new Vector3(300f, 1.1f, 0f);
         public static readonly Vector3 Level4ChaserSpawn = new Vector3(300f, 1.1f, -6f);
 
-        private Vector3 GetPlayerSpawnForLevel(int level) => level switch
+        public GameObject GetLevelRoot(int level) => level switch
         {
-            1 => Level1PlayerSpawn,
-            2 => Level2PlayerSpawn,
-            3 => Level3PlayerSpawn,
-            4 => Level4PlayerSpawn,
-            _ => Level1PlayerSpawn
+            1 => _level1Root,
+            2 => _level2Root,
+            3 => _level3Root,
+            4 => _level4Root,
+            _ => _level1Root
         };
 
-        private Vector3 GetChaserSpawnForLevel(int level) => level switch
+        private Vector3 GetPlayerSpawnForLevel(int level)
         {
-            1 => Level1ChaserSpawn,
-            2 => Level2ChaserSpawn,
-            3 => Level3ChaserSpawn,
-            4 => Level4ChaserSpawn,
-            _ => Level1ChaserSpawn
-        };
+            GameObject root = GetLevelRoot(level);
+            if (root != null)
+            {
+                ParkourSector sector = root.GetComponent<ParkourSector>();
+                if (sector != null) return sector.PlayerSpawnPosition;
+            }
+
+            return level switch
+            {
+                1 => Level1PlayerSpawn,
+                2 => Level2PlayerSpawn,
+                3 => Level3PlayerSpawn,
+                4 => Level4PlayerSpawn,
+                _ => Level1PlayerSpawn
+            };
+        }
+
+        private Vector3 GetChaserSpawnForLevel(int level)
+        {
+            GameObject root = GetLevelRoot(level);
+            if (root != null)
+            {
+                ParkourSector sector = root.GetComponent<ParkourSector>();
+                if (sector != null) return sector.ChaserSpawnPosition;
+            }
+
+            return level switch
+            {
+                1 => Level1ChaserSpawn,
+                2 => Level2ChaserSpawn,
+                3 => Level3ChaserSpawn,
+                4 => Level4ChaserSpawn,
+                _ => Level1ChaserSpawn
+            };
+        }
 
         private bool _isTransitioning = false;
 

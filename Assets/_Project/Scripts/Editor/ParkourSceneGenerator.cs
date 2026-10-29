@@ -128,6 +128,10 @@ namespace Vector3D.EditorScripts
         private static void BuildLevel1(Transform levelRoot, Material floorMat, Material railingMat, Material vaultMat, Material slideMat, Material goalMat)
         {
             float trackX = 0f;
+            ParkourSector sector = levelRoot.gameObject.GetComponent<ParkourSector>() ?? levelRoot.gameObject.AddComponent<ParkourSector>();
+            sector.SectorNumber = 1;
+            sector.TrackCenterX = trackX;
+
             GameObject trackRoot = new GameObject("TrackSegments");
             trackRoot.transform.SetParent(levelRoot, false);
 
@@ -164,7 +168,7 @@ namespace Vector3D.EditorScripts
             }
 
             // Finish Goal Gate at Z = 246m
-            BuildFinishGate(obstaclesRoot.transform, trackX, 246.0f, goalMat, railingMat);
+            BuildFinishGate(obstaclesRoot.transform, trackX, 246.0f, goalMat, railingMat, 1);
         }
 
         #endregion
@@ -174,6 +178,9 @@ namespace Vector3D.EditorScripts
         private static void BuildLevel2(Transform levelRoot, Material floorMat, Material railingMat, Material vaultMat, Material slideMat, Material goalMat, Material cyanWallMat, Material orangeWallMat)
         {
             float trackX = 100.0f;
+            ParkourSector sector = levelRoot.gameObject.GetComponent<ParkourSector>() ?? levelRoot.gameObject.AddComponent<ParkourSector>();
+            sector.SectorNumber = 2;
+            sector.TrackCenterX = trackX;
             GameObject trackRoot = new GameObject("TrackSegments");
             trackRoot.transform.SetParent(levelRoot, false);
 
@@ -222,7 +229,7 @@ namespace Vector3D.EditorScripts
             BuildVaultBlock(obstaclesRoot.transform, trackX, 236.0f, vaultMat);
 
             // Finish Goal Gate at Z = 246m
-            BuildFinishGate(obstaclesRoot.transform, trackX, 246.0f, goalMat, railingMat);
+            BuildFinishGate(obstaclesRoot.transform, trackX, 246.0f, goalMat, railingMat, 2);
         }
 
         #endregion
@@ -232,6 +239,34 @@ namespace Vector3D.EditorScripts
         private static void BuildLevel3(Transform levelRoot, Material floorMat, Material railingMat, Material vaultMat, Material slideMat, Material goalMat, Material cyanWallMat, Material orangeWallMat)
         {
             float trackX = 200.0f;
+            ParkourSector sector = levelRoot.gameObject.GetComponent<ParkourSector>() ?? levelRoot.gameObject.AddComponent<ParkourSector>();
+            sector.SectorNumber = 3;
+            sector.TrackCenterX = trackX;
+
+            // Traversal Zone for Vertical Shaft
+            GameObject shaftZoneGo = new GameObject("TraversalZone_VerticalShaft");
+            shaftZoneGo.transform.SetParent(levelRoot, false);
+            shaftZoneGo.transform.position = new Vector3(trackX, 5.0f, 85.0f);
+            BoxCollider shaftCol = shaftZoneGo.AddComponent<BoxCollider>();
+            shaftCol.isTrigger = true;
+            shaftCol.size = new Vector3(6.0f, 12.0f, 48.0f);
+            TraversalZone shaftZone = shaftZoneGo.AddComponent<TraversalZone>();
+            shaftZone.ZoneType = TraversalZoneType.VerticalShaft;
+            shaftZone.SectorNumber = 3;
+            shaftZone.TargetElevation = 6.0f;
+
+            // Traversal Zone for Rooftop Drop
+            GameObject dropZoneGo = new GameObject("TraversalZone_RooftopDrop");
+            dropZoneGo.transform.SetParent(levelRoot, false);
+            dropZoneGo.transform.position = new Vector3(trackX, 3.0f, 175.0f);
+            BoxCollider dropCol = dropZoneGo.AddComponent<BoxCollider>();
+            dropCol.isTrigger = true;
+            dropCol.size = new Vector3(6.0f, 8.0f, 16.0f);
+            TraversalZone dropZone = dropZoneGo.AddComponent<TraversalZone>();
+            dropZone.ZoneType = TraversalZoneType.RooftopDrop;
+            dropZone.SectorNumber = 3;
+            dropZone.TargetElevation = 0.0f;
+
             GameObject trackRoot = new GameObject("TrackSegments");
             trackRoot.transform.SetParent(levelRoot, false);
 
@@ -290,7 +325,7 @@ namespace Vector3D.EditorScripts
             BuildVaultBlock(obstaclesRoot.transform, trackX, 222.0f, vaultMat, 0.0f);
 
             // Finish Goal Gate at Z = 246m (TargetLevelIndex = 3)
-            BuildFinishGate(obstaclesRoot.transform, trackX, 246.0f, goalMat, railingMat);
+            BuildFinishGate(obstaclesRoot.transform, trackX, 246.0f, goalMat, railingMat, 3);
         }
 
         #endregion
@@ -300,6 +335,34 @@ namespace Vector3D.EditorScripts
         private static void BuildLevel4(Transform levelRoot, Material floorMat, Material railingMat, Material vaultMat, Material slideMat, Material goalMat, Material cyanWallMat, Material orangeWallMat)
         {
             float trackX = 300.0f;
+            ParkourSector sector = levelRoot.gameObject.GetComponent<ParkourSector>() ?? levelRoot.gameObject.AddComponent<ParkourSector>();
+            sector.SectorNumber = 4;
+            sector.TrackCenterX = trackX;
+
+            // Traversal Zone for Vertical Shaft Gauntlet
+            GameObject shaftZoneGo = new GameObject("TraversalZone_VerticalShaft");
+            shaftZoneGo.transform.SetParent(levelRoot, false);
+            shaftZoneGo.transform.position = new Vector3(trackX, 6.0f, 105.5f);
+            BoxCollider shaftCol = shaftZoneGo.AddComponent<BoxCollider>();
+            shaftCol.isTrigger = true;
+            shaftCol.size = new Vector3(6.0f, 14.0f, 42.0f);
+            TraversalZone shaftZone = shaftZoneGo.AddComponent<TraversalZone>();
+            shaftZone.ZoneType = TraversalZoneType.VerticalShaft;
+            shaftZone.SectorNumber = 4;
+            shaftZone.TargetElevation = 6.0f;
+
+            // Traversal Zone for Rooftop Drop
+            GameObject dropZoneGo = new GameObject("TraversalZone_RooftopDrop");
+            dropZoneGo.transform.SetParent(levelRoot, false);
+            dropZoneGo.transform.position = new Vector3(trackX, 3.0f, 183.0f);
+            BoxCollider dropCol = dropZoneGo.AddComponent<BoxCollider>();
+            dropCol.isTrigger = true;
+            dropCol.size = new Vector3(6.0f, 8.0f, 16.0f);
+            TraversalZone dropZone = dropZoneGo.AddComponent<TraversalZone>();
+            dropZone.ZoneType = TraversalZoneType.RooftopDrop;
+            dropZone.SectorNumber = 4;
+            dropZone.TargetElevation = 0.0f;
+
             GameObject trackRoot = new GameObject("TrackSegments");
             trackRoot.transform.SetParent(levelRoot, false);
 
@@ -371,7 +434,7 @@ namespace Vector3D.EditorScripts
             BuildVaultBlock(obstaclesRoot.transform, trackX, 224.0f, vaultMat, 0.0f);
 
             // Finish Goal Gate at Z = 246m (TargetLevelIndex = 4)
-            BuildFinishGate(obstaclesRoot.transform, trackX, 246.0f, goalMat, railingMat);
+            BuildFinishGate(obstaclesRoot.transform, trackX, 246.0f, goalMat, railingMat, 4);
         }
 
         #endregion
@@ -527,7 +590,7 @@ namespace Vector3D.EditorScripts
             bc.size = size;
         }
 
-        private static void BuildFinishGate(Transform parent, float trackX, float z, Material goalMat, Material postMat)
+        private static void BuildFinishGate(Transform parent, float trackX, float z, Material goalMat, Material postMat, int targetLevel = 1)
         {
             GameObject goalRoot = new GameObject($"FinishGoalGate_{trackX:F0}");
             goalRoot.transform.SetParent(parent);
@@ -574,7 +637,7 @@ namespace Vector3D.EditorScripts
             rb.isKinematic = true;
 
             FinishLine fl = goalRoot.AddComponent<FinishLine>();
-            fl.TargetLevelIndex = trackX > 250f ? 4 : (trackX > 150f ? 3 : (trackX > 50f ? 2 : 1));
+            fl.TargetLevelIndex = targetLevel;
         }
 
         private static void ApplyProBuilderVertexColor(ProBuilderMesh pb, Color color)
@@ -943,7 +1006,7 @@ namespace Vector3D.EditorScripts
                 new Color(0.88f, 0.92f, 0.98f, 0.95f), TextAnchor.MiddleCenter,
                 new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(0f, -190f), new Vector2(460f, 26f), builtinFont);
 
-            CreateText("ControlsLine3", leftCard.transform, "[Shift] Sprint Boost (1.4x Speed Burst)", 15, FontStyle.Normal,
+            CreateText("ControlsLine3", leftCard.transform, "[Shift / E] Speed Burst (1.4x Sprint)", 15, FontStyle.Normal,
                 new Color(0.88f, 0.92f, 0.98f, 0.95f), TextAnchor.MiddleCenter,
                 new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(0f, -225f), new Vector2(460f, 26f), builtinFont);
 

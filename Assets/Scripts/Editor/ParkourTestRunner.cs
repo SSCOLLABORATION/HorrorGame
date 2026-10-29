@@ -79,6 +79,13 @@ namespace VectorParkour.EditorScripts
                 player.RestartRun();
             }
 
+            player.TeleportToStart(new Vector3(0f, 1.1f, -10f));
+            var chaser = Object.FindFirstObjectByType<ChaserAI>();
+            if (chaser != null)
+            {
+                chaser.TeleportToStart(new Vector3(0f, 1.1f, -16f));
+            }
+
             lastPos = player.transform.position;
             EditorApplication.update -= OnTestUpdate;
             EditorApplication.update += OnTestUpdate;
@@ -165,7 +172,7 @@ namespace VectorParkour.EditorScripts
                         jumpApexZ = currentPos.z;
                     }
 
-                    if (player.CurrentState == MovementState.Running && frameCounter > 20)
+                    if (player.CurrentState == MovementState.Running && cc.isGrounded && frameCounter > 20)
                     {
                         // Landed!
                         reportLines.Add("\n[TEST C - Responsive Jumping]");
@@ -257,8 +264,15 @@ namespace VectorParkour.EditorScripts
                         sf.SetValue(player, 0.18f);
                     }
 
-                    // Auto-jump for gap at Z=32
-                    if (currentPos.z >= 30.5f && currentPos.z <= 31.8f && player.CurrentState == MovementState.Running)
+                    // Auto-jump for gap at Z=35 (Roof 1 ends at 35m, Roof 2 starts at 40m)
+                    if (currentPos.z >= 33.0f && currentPos.z <= 34.5f && player.CurrentState == MovementState.Running)
+                    {
+                        var jf = typeof(PlayerParkourController).GetField("jumpBufferTimer", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+                        jf.SetValue(player, 0.18f);
+                    }
+
+                    // Auto-vault/jump for block at Z=52
+                    if (currentPos.z >= 50.0f && currentPos.z <= 51.5f && player.CurrentState == MovementState.Running)
                     {
                         var jf = typeof(PlayerParkourController).GetField("jumpBufferTimer", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
                         jf.SetValue(player, 0.18f);
@@ -271,15 +285,15 @@ namespace VectorParkour.EditorScripts
                         sf.SetValue(player, 0.18f);
                     }
 
-                    // Auto-jump for gap at Z=74
-                    if (currentPos.z >= 72.5f && currentPos.z <= 73.8f && player.CurrentState == MovementState.Running)
+                    // Auto-jump for gap at Z=80 (Roof 2 ends at 80m, Roof 3 starts at 85m)
+                    if (currentPos.z >= 78.0f && currentPos.z <= 79.5f && player.CurrentState == MovementState.Running)
                     {
                         var jf = typeof(PlayerParkourController).GetField("jumpBufferTimer", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
                         jf.SetValue(player, 0.18f);
                     }
 
                     var cam = Camera.main;
-                    if (currentPos.z >= 90.0f || frameCounter >= 450)
+                    if (currentPos.z >= 90.0f || frameCounter >= 750)
                     {
                         reportLines.Add("\n[TEST F & G - Long-Duration Run & Gaps]");
                         reportLines.Add($"  Reached Z Position: {currentPos.z:F2}m (Cleared 2 rooftop buildings & 2 gaps)");
