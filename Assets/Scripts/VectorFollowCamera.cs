@@ -28,11 +28,11 @@ namespace VectorParkour
         [SerializeField] private Vector3 alternateEulerAngle = new Vector3(9.0f, -24.0f, 0.0f);
 
         [Header("Overhead / Top View Settings")]
-        [Tooltip("Follow offset when player is between both walls (overhead/top view).")]
-        [SerializeField] private Vector3 overheadOffset = new Vector3(0.0f, 7.5f, -3.0f);
+        [Tooltip("Follow offset when player is between both walls (elevated chase view).")]
+        [SerializeField] private Vector3 overheadOffset = new Vector3(0.0f, 3.2f, -4.5f);
 
         [Tooltip("Follow Euler angles (pitch, yaw, roll) looking down from above.")]
-        [SerializeField] private Vector3 overheadEulerAngle = new Vector3(62.0f, 0.0f, 0.0f);
+        [SerializeField] private Vector3 overheadEulerAngle = new Vector3(22.0f, 0.0f, 0.0f);
 
         [Tooltip("Speed of transition into/out of overhead top view.")]
         [SerializeField] private float overheadTransitionSpeed = 5.0f;
@@ -48,7 +48,7 @@ namespace VectorParkour
         [Header("Damping Parameters")]
         [SerializeField] private float smoothTimeX = 0.06f; // Smooths lateral wall-run shifts
         [SerializeField] private float smoothTimeY = 0.08f; // Smooths vertical jump arcs
-        [SerializeField] private float smoothTimeZ = 0.06f; // Smooths longitudinal transitions (overhead / side switches)
+        [SerializeField] private float smoothTimeZ = 0.03f; // Smooths longitudinal transitions (overhead / side switches)
 
         [Header("Dynamic FOV")]
         [SerializeField] private float baseFOV = 50.0f;
@@ -109,6 +109,15 @@ namespace VectorParkour
         private void Awake()
         {
             cam = GetComponent<Camera>();
+            if (overheadEulerAngle.x >= 60.0f)
+            {
+                overheadOffset = new Vector3(0.0f, 3.2f, -4.5f);
+                overheadEulerAngle = new Vector3(22.0f, 0.0f, 0.0f);
+            }
+            if (smoothTimeZ > 0.05f)
+            {
+                smoothTimeZ = 0.03f;
+            }
             currentOffset = defaultOffset;
             currentEulerAngle = defaultEulerAngle;
         }
@@ -347,6 +356,12 @@ namespace VectorParkour
                     targetSideOffset = defaultOffset;
                     targetSideEuler = defaultEulerAngle;
                     break;
+            }
+
+            // Subtle Titanfall-style Camera Roll (Z-axis Dutch tilt) during wall runs
+            if (playerController != null && playerController.IsWallRunning)
+            {
+                targetSideEuler.z += -6f * playerController.WallSide;
             }
 
             // Frame-rate independent exponential smoothing of offsets and angles

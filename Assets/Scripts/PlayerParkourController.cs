@@ -83,8 +83,8 @@ namespace VectorParkour
         [SerializeField] private float standingHeight = 1.8f;
 
         [Header("Wall Run Settings")]
-        [Tooltip("Speed multiplier applied to baseSpeed during wall run (~1.15x).")]
-        [SerializeField] private float wallRunSpeedMultiplier = 1.15f;
+        [Tooltip("Speed multiplier applied to baseSpeed during wall run (~1.2x).")]
+        [SerializeField] private float wallRunSpeedMultiplier = 1.2f;
 
         [Tooltip("Probing range for detecting left or right wall-run colliders.")]
         [SerializeField] private float wallDetectionRange = 2.85f;
@@ -111,6 +111,7 @@ namespace VectorParkour
         [Tooltip("Initial upward impulse velocity for vertical wall climb via Space (m/s).")]
         [SerializeField] private float wallClimbImpulse = 9.2f;
 
+#pragma warning disable 0414
         [Tooltip("Gravity acceleration applied during upward wall climb (m/s^2).")]
         [SerializeField] private float wallClimbGravity = -14.0f;
 
@@ -118,13 +119,14 @@ namespace VectorParkour
         [SerializeField] private float maxWallClimbY = 7.5f;
 
         // Legacy compatibility fields
-        [SerializeField] private float wallJumpUpImpulse = 8.5f;
+        [SerializeField] private float wallJumpUpImpulse = 9.2f;
         [SerializeField] private float wallJumpHorizontalSpeed = 7.5f;
-        [SerializeField] private float wallJumpForwardSpeed = 5.5f;
+        [SerializeField] private float wallJumpForwardSpeed = 10.925f;
         [SerializeField] private float wallJumpGravity = -18.0f;
         [SerializeField] private float wallJumpMaxTransferTime = 0.85f;
         [SerializeField] private float wallAttachmentTolerance = 0.35f;
         [SerializeField] private float wallAttachedMaxTime = 3.5f;
+#pragma warning restore 0414
 
         [Header("Sprint Burst")]
         [SerializeField] private float sprintMultiplier = 1.4f;
@@ -195,7 +197,7 @@ namespace VectorParkour
 
         // Public Query Properties for other systems
         public bool IsGrounded => characterController != null && characterController.isGrounded;
-        public bool IsJumping => currentState == MovementState.Jumping || currentState == MovementState.Falling;
+        public bool IsJumping => currentState == MovementState.Jumping || currentState == MovementState.Falling || currentState == MovementState.WallJumpTransferring;
         public bool IsSliding => currentState == MovementState.Sliding;
         public bool IsWallRunning => currentState == MovementState.WallRunning;
         public bool IsWallAttached => currentState == MovementState.WallAttached;
@@ -280,15 +282,15 @@ namespace VectorParkour
         private float stumbleTimer = 0f;
 
         // Contextual Vault Runtime Variables
-        private bool inVaultZone = false;
-        private Collider pendingVaultCollider = null;
         private float vaultTimer = 0f;
         private Vector3 vaultStartPos;
         private float vaultTargetZ;
         private float vaultPeakY;
 
-        // Wall Run State Variables
+        // Wall Run State Variables (Titanfall 2 Parabolic Trajectory & Chaining)
         private int wallSide = 0; // -1 for left wall, +1 for right wall, 0 for none
+        private int lastWallSide = 0; // Last latched wall side to allow instant opposite chaining
+        private float sameWallCooldownTimer = 0f; // 0.4s debounce only when re-attaching to same wall
         private Collider activeWallCollider;
         private float wallRunTimer = 0f;
         private float wallCooldownTimer = 0f;
@@ -304,11 +306,18 @@ namespace VectorParkour
 
         // Vertical Alternating Wall-Jump Traversal State
         private float wallJumpTimer = 0f;
+        private float wallJumpStartX = 0f;
         private float wallAttachedTimer = 0f;
         private float currentAttachedWallX = 0f;
         private float targetWallJumpX = 0f;
         private int targetWallSide = 0; // -1 for Left, +1 for Right
         private int nextRequiredDirection = 0; // -1 for Left (A), +1 for Right (D)
+
+        // Top-Ledge Mantle Smoothing
+        private float mantleSmoothTimer = 0f;
+        private float mantleDuration = 0.15f;
+        private float mantleStartY = 0f;
+        private float mantleTargetY = 0f;
 
         // State Flags
         private bool isSprinting = false;
@@ -481,6 +490,7 @@ namespace VectorParkour
             }
 
             if (wallCooldownTimer > 0f) wallCooldownTimer -= dt;
+            if (sameWallCooldownTimer > 0f) sameWallCooldownTimer -= dt;
             if (leftWallBufferTimer > 0f) leftWallBufferTimer -= dt;
             if (rightWallBufferTimer > 0f) rightWallBufferTimer -= dt;
             if (jumpBufferTimer > 0f) jumpBufferTimer -= dt;
@@ -553,28 +563,34 @@ namespace VectorParkour
                     return;
                 }
 
-                // Core Mechanic: Pressing Space multiple times scales height along the wall!
-                if (jumpDown)
-                {
-                    ScaleWallHeight();
-                    return;
-                }
-
                 if (slideDown)
                 {
                     DisengageWallRun(userInitiated: true);
                     return;
                 }
 
-                if (wallSide == -1 && rightPressed && !justStartedWallRun)
+                bool jumpPressed = jumpDown;
+                bool oppositePressed = (wallSide == -1 && (rightPressed || rightHeld) && !justStartedWallRun) ||
+                                       (wallSide == 1 && (leftPressed || leftHeld) && !justStartedWallRun);
+
+                // Titanfall 2 Continuous Momentum Wall-to-Wall Kick-Off or Disengage Hop
+                if (jumpPressed || oppositePressed)
                 {
-                    DisengageWallRun(userInitiated: true);
-                    return;
-                }
-                if (wallSide == 1 && leftPressed && !justStartedWallRun)
-                {
-                    DisengageWallRun(userInitiated: true);
-                    return;
+                    if (CheckIsBetweenBothWalls(6.0f) || CheckHasOppositeWall(-wallSide, 6.0f))
+                    {
+                        ExecuteWallJumpTransfer(-wallSide);
+                        return;
+                    }
+                    else if (jumpPressed)
+                    {
+                        ExecuteWallDisengageHop();
+                        return;
+                    }
+                    else if (oppositePressed)
+                    {
+                        DisengageWallRun(userInitiated: true);
+                        return;
+                    }
                 }
             }
             else if (currentState == MovementState.WallAttached)
@@ -620,7 +636,8 @@ namespace VectorParkour
 
                 if (leftWallBufferTimer > 0f || isLeftWallHeld)
                 {
-                    if (wallCooldownTimer <= 0f && CheckWallRunSurface(out int side, out RaycastHit hit) && side == -1)
+                    bool canAttach = (lastWallSide != -1) || (sameWallCooldownTimer <= 0f);
+                    if (canAttach && CheckWallRunSurface(out int side, out RaycastHit hit) && side == -1)
                     {
                         leftWallBufferTimer = 0f;
                         StartWallRun(side, hit);
@@ -630,7 +647,8 @@ namespace VectorParkour
 
                 if (rightWallBufferTimer > 0f || isRightWallHeld)
                 {
-                    if (wallCooldownTimer <= 0f && CheckWallRunSurface(out int side, out RaycastHit hit) && side == 1)
+                    bool canAttach = (lastWallSide != 1) || (sameWallCooldownTimer <= 0f);
+                    if (canAttach && CheckWallRunSurface(out int side, out RaycastHit hit) && side == 1)
                     {
                         rightWallBufferTimer = 0f;
                         StartWallRun(side, hit);
@@ -639,11 +657,12 @@ namespace VectorParkour
                 }
 
                 // Contextual auto-latch when airborne between opposing corridor walls
-                if (wallCooldownTimer <= 0f && !characterController.isGrounded && CheckIsBetweenBothWalls())
+                if (!characterController.isGrounded && CheckIsBetweenBothWalls(6.0f))
                 {
                     if (CheckWallRunSurface(out int corridorSide, out RaycastHit corridorHit))
                     {
-                        if (jumpDown || isLeftWallHeld || isRightWallHeld || leftWallBufferTimer > 0f || rightWallBufferTimer > 0f || sprintDown)
+                        bool canAttach = (corridorSide != lastWallSide) || (sameWallCooldownTimer <= 0f);
+                        if (canAttach && (jumpDown || isLeftWallHeld || isRightWallHeld || leftWallBufferTimer > 0f || rightWallBufferTimer > 0f || sprintDown))
                         {
                             StartWallRun(corridorSide, corridorHit);
                             if (jumpDown) ScaleWallHeight();
@@ -732,6 +751,17 @@ namespace VectorParkour
             return hasLeft && hasRight;
         }
 
+        public bool CheckHasOppositeWall(int oppositeSide, float probeDistance = 6.0f)
+        {
+            Vector3 origin = transform.position + Vector3.up * 1.0f;
+            Vector3 probeDir = oppositeSide == 1 ? Vector3.right : -Vector3.right;
+            if (Physics.Raycast(origin, probeDir, out RaycastHit hit, probeDistance, playerLayerMask, QueryTriggerInteraction.Ignore))
+            {
+                return IsWallRunObstacle(hit.collider);
+            }
+            return false;
+        }
+
         public VaultQuality EvaluateVaultQuality(Collider obstacle)
         {
             if (obstacle == null) return VaultQuality.Good;
@@ -766,40 +796,37 @@ namespace VectorParkour
             }
         }
 
-        private bool TryDetectVaultObstacle(out Collider vaultCollider, out float distanceToObstacle)
+        public bool TryDetectVaultObstacle(out Collider vaultCollider)
         {
-            if (inVaultZone && pendingVaultCollider != null)
+            float lookAheadDist = Mathf.Max(2.2f, currentSpeed * 0.28f);
+            Vector3 boxCenter = transform.position + Vector3.up * 0.7f;
+            Vector3 halfExtents = new Vector3(0.4f, 0.45f, 0.1f);
+
+            if (Physics.BoxCast(boxCenter, halfExtents, Vector3.forward, out RaycastHit hit, Quaternion.identity, lookAheadDist, playerLayerMask, QueryTriggerInteraction.Collide))
             {
-                vaultCollider = pendingVaultCollider;
+                if (hit.collider.CompareTag("Obstacle_Vault"))
+                {
+                    vaultCollider = hit.collider;
+                    return true;
+                }
+            }
+
+            vaultCollider = null;
+            return false;
+        }
+
+        public bool TryDetectVaultObstacle(out Collider vaultCollider, out float distanceToObstacle)
+        {
+            if (TryDetectVaultObstacle(out vaultCollider))
+            {
                 float frontZ = vaultCollider.bounds.min.z;
                 float playerFrontZ = transform.position.z + (characterController != null ? characterController.radius : 0.35f);
                 distanceToObstacle = Mathf.Max(0f, frontZ - playerFrontZ);
                 return true;
             }
 
-            // Forward BoxCast ahead up to 6.2m to reliably detect upcoming vault blocks across the track
-            Vector3 waistOrigin = transform.position + Vector3.up * 0.65f;
-            Vector3 halfExtents = new Vector3(1.5f, 0.4f, 0.1f);
-            if (Physics.BoxCast(waistOrigin, halfExtents, Vector3.forward, out RaycastHit hit, Quaternion.identity, 6.2f, playerLayerMask, QueryTriggerInteraction.Collide))
-            {
-                if (hit.collider.CompareTag("Obstacle_Vault"))
-                {
-                    vaultCollider = hit.collider;
-                    float frontZ = hit.collider.bounds.min.z;
-                    float playerFrontZ = transform.position.z + (characterController != null ? characterController.radius : 0.35f);
-                    distanceToObstacle = Mathf.Max(0f, frontZ - playerFrontZ);
-                    return true;
-                }
-            }
-
-            vaultCollider = null;
             distanceToObstacle = 999f;
             return false;
-        }
-
-        private bool TryDetectVaultObstacle(out Collider vaultCollider)
-        {
-            return TryDetectVaultObstacle(out vaultCollider, out _);
         }
 
         public void ExecuteVault(Collider obstacle, VaultQuality quality)
@@ -865,9 +892,6 @@ namespace VectorParkour
                     break;
             }
 
-            inVaultZone = false;
-            pendingVaultCollider = null;
-
             if (animator != null)
             {
                 animator.SetBool(AnimIsVaulting, true);
@@ -900,10 +924,19 @@ namespace VectorParkour
 
             currentState = MovementState.WallRunning;
             wallSide = side;
+            lastWallSide = side;
+            sameWallCooldownTimer = 0f;
+            wallCooldownTimer = 0f;
             activeWallCollider = hit.collider;
             wallRunTimer = 0f;
             justStartedWallRun = true;
-            verticalVelocity = 0f;
+
+            // Titanfall 2 Parabolic Wall-Run: preserve or boost forward speed (~1.2x baseSpeed)
+            currentSpeed = Mathf.Max(currentSpeed, baseSpeed * wallRunSpeedMultiplier);
+
+            // Initial upward entry curve impulse arcing slightly upward upon latching onto the wall
+            verticalVelocity = Mathf.Clamp(verticalVelocity * 0.5f + 3.2f, 2.5f, 5.5f);
+
             lateralVelocity = 0f;
             airborneTimer = 0f;
             jumpBufferTimer = 0f;
@@ -940,6 +973,8 @@ namespace VectorParkour
             currentState = MovementState.Running;
             verticalVelocity = -1.0f;
             wallSide = 0;
+            lastWallSide = 0;
+            sameWallCooldownTimer = 0f;
             activeWallCollider = null;
             wallRunTimer = 0f;
             airborneTimer = 0f;
@@ -950,11 +985,38 @@ namespace VectorParkour
             }
         }
 
+        private void ExecuteWallDisengageHop()
+        {
+            currentState = MovementState.Jumping;
+            airborneTimer = 0f;
+            verticalVelocity = wallDisengageHopForce;
+            currentSpeed = baseSpeed * 1.15f;
+
+            float directionToCenter = Mathf.Sign(_trackCenterX - transform.position.x);
+            if (directionToCenter == 0f) directionToCenter = (wallSide == -1) ? 1f : -1f;
+            lateralVelocity = directionToCenter * 5.0f;
+
+            lastWallSide = wallSide;
+            sameWallCooldownTimer = 0.4f;
+            wallCooldownTimer = wallExitCooldown;
+            wallSide = 0;
+            activeWallCollider = null;
+            justStartedWallRun = false;
+        }
+
         private void DisengageWallRun(bool userInitiated)
         {
             currentState = MovementState.Jumping;
             airborneTimer = 0f;
             verticalVelocity = wallDisengageHopForce;
+            currentSpeed = baseSpeed * 1.15f;
+
+            float directionToCenter = Mathf.Sign(_trackCenterX - transform.position.x);
+            if (directionToCenter == 0f) directionToCenter = (wallSide == -1) ? 1f : -1f;
+            lateralVelocity = directionToCenter * 4.0f;
+
+            lastWallSide = wallSide;
+            sameWallCooldownTimer = 0.4f;
             wallCooldownTimer = wallExitCooldown;
             wallSide = 0;
             activeWallCollider = null;
@@ -971,7 +1033,8 @@ namespace VectorParkour
             injectedShift = false;
             injectedJumpDir = 0;
             wallJumpTimer = 0f;
-            verticalVelocity = 0f;
+            // Titanfall 2 continuous momentum: never freeze at 0 forward speed
+            currentSpeed = Mathf.Max(currentSpeed, baseSpeed * wallRunSpeedMultiplier);
             lateralVelocity = 0f;
             airborneTimer = 0f;
             jumpBufferTimer = 0f;
@@ -983,7 +1046,7 @@ namespace VectorParkour
             nextRequiredDirection = (wallSide == -1) ? 1 : -1;
         }
 
-        private void ExecuteWallJumpTransfer(int toSide)
+        public void ExecuteWallJumpTransfer(int toSide)
         {
             currentState = MovementState.WallJumpTransferring;
             targetWallSide = toSide;
@@ -993,7 +1056,21 @@ namespace VectorParkour
             injectedShift = false;
             injectedJumpDir = 0;
             wallJumpTimer = 0f;
-            verticalVelocity = (transform.position.y >= 6.2f) ? 1.5f : wallJumpUpImpulse;
+            wallJumpStartX = transform.position.x;
+
+            // Set vertical velocity = wallJumpUpImpulse (9.2f m/s), tapering smoothly only when y >= 6.0f
+            if (transform.position.y >= 6.0f)
+            {
+                float overshoot = transform.position.y - 6.0f;
+                verticalVelocity = Mathf.Max(1.5f, wallJumpUpImpulse - overshoot * 14.0f);
+            }
+            else
+            {
+                verticalVelocity = wallJumpUpImpulse;
+            }
+
+            // CRITICAL: Keep forward speed high during transfer (1.15x baseSpeed)
+            currentSpeed = baseSpeed * 1.15f;
             lateralVelocity = 0f;
 
             // Determine target wall X
@@ -1007,7 +1084,7 @@ namespace VectorParkour
             }
             else
             {
-                float offsetFromCenter = currentAttachedWallX - _trackCenterX;
+                float offsetFromCenter = currentAttachedWallX != 0f ? (currentAttachedWallX - _trackCenterX) : (transform.position.x - _trackCenterX);
                 targetWallJumpX = _trackCenterX - offsetFromCenter;
             }
         }
@@ -1016,6 +1093,8 @@ namespace VectorParkour
         {
             currentState = MovementState.WallAttached;
             wallSide = side;
+            lastWallSide = side;
+            sameWallCooldownTimer = 0f;
             wallAttachedTimer = 0f;
             overrideWallInput = false;
             overrideLeft = false;
@@ -1023,7 +1102,10 @@ namespace VectorParkour
             injectedShift = false;
             injectedJumpDir = 0;
             wallJumpTimer = 0f;
-            verticalVelocity = 0f;
+
+            // Upward curve entry impulse on attachment
+            verticalVelocity = Mathf.Clamp(verticalVelocity * 0.5f + 3.2f, 2.5f, 5.5f);
+            currentSpeed = Mathf.Max(currentSpeed, baseSpeed * wallRunSpeedMultiplier);
             lateralVelocity = 0f;
 
             if (hit.collider != null)
@@ -1031,10 +1113,12 @@ namespace VectorParkour
                 activeWallCollider = hit.collider;
                 float safeBuffer = (characterController != null ? characterController.radius : 0.35f) + 0.12f;
                 currentAttachedWallX = side == 1 ? (hit.point.x - safeBuffer) : (hit.point.x + safeBuffer);
+                targetWallX = currentAttachedWallX;
             }
             else
             {
                 currentAttachedWallX = targetWallJumpX;
+                targetWallX = targetWallJumpX;
             }
 
             // Alternating input: reverse next required direction
@@ -1061,11 +1145,48 @@ namespace VectorParkour
             if (reachedPlatform)
             {
                 wallCooldownTimer = wallExitCooldown;
+                lastWallSide = 0;
+                sameWallCooldownTimer = 0f;
                 if (visualRoot != null)
                 {
                     visualRoot.localRotation = defaultVisualLocalRotation;
                 }
             }
+        }
+
+        private bool CheckAndHandleUpperPlatformMantle(bool grounded)
+        {
+            if (transform.position.y < 5.65f) return false;
+
+            Vector3 downProbe = transform.position + Vector3.up * 0.2f;
+            bool hasFloorBelow = Physics.Raycast(downProbe, Vector3.down, out RaycastHit wallFloorHit, 1.4f, playerLayerMask, QueryTriggerInteraction.Ignore);
+            Vector3 forwardDownProbe = transform.position + Vector3.forward * 0.8f + Vector3.up * 0.2f;
+            bool forwardFloor = Physics.Raycast(forwardDownProbe, Vector3.down, out RaycastHit fwdFloorHit, 1.6f, playerLayerMask, QueryTriggerInteraction.Ignore);
+
+            if (grounded || (hasFloorBelow && wallFloorHit.point.y >= 5.65f) || (forwardFloor && fwdFloorHit.point.y >= 5.65f))
+            {
+                float detectedFloorY = 6.0f;
+                if (hasFloorBelow && wallFloorHit.point.y >= 5.65f) detectedFloorY = wallFloorHit.point.y;
+                else if (forwardFloor && fwdFloorHit.point.y >= 5.65f) detectedFloorY = fwdFloorHit.point.y;
+                else if (grounded) detectedFloorY = transform.position.y;
+
+                float targetY = detectedFloorY + (characterController != null ? characterController.skinWidth : 0.015f);
+
+                currentState = MovementState.Running;
+                mantleSmoothTimer = 0.15f;
+                mantleDuration = 0.15f;
+                mantleStartY = transform.position.y;
+                mantleTargetY = targetY;
+                verticalVelocity = 0f;
+                currentSpeed = Mathf.Max(currentSpeed, baseSpeed * 1.1f);
+
+                ExitWallJumpTraversal(true);
+                lastWallSide = 0;
+                sameWallCooldownTimer = 0f;
+                return true;
+            }
+
+            return false;
         }
 
         private void UpdateVisualTilt()
@@ -1082,8 +1203,15 @@ namespace VectorParkour
             }
             else if (currentState == MovementState.WallJumpTransferring)
             {
-                float targetZAngle = targetWallSide == -1 ? -wallTiltAngle : wallTiltAngle;
-                targetRot = defaultVisualLocalRotation * Quaternion.Euler(0f, 0f, targetZAngle);
+                // Smoothly blend visualRoot.localRotation roll from -wallTiltAngle to +wallTiltAngle Mid-Air
+                float totalDist = Mathf.Abs(targetWallJumpX - wallJumpStartX);
+                float currDist = Mathf.Abs(transform.position.x - wallJumpStartX);
+                float progress = totalDist > 0.01f ? Mathf.Clamp01(currDist / totalDist) : Mathf.Clamp01(wallJumpTimer / 0.3f);
+                float smoothT = Mathf.SmoothStep(0f, 1f, progress);
+                float startRoll = (targetWallSide == 1) ? -wallTiltAngle : wallTiltAngle;
+                float targetRoll = (targetWallSide == 1) ? wallTiltAngle : -wallTiltAngle;
+                float currentRoll = Mathf.Lerp(startRoll, targetRoll, smoothT);
+                targetRot = defaultVisualLocalRotation * Quaternion.Euler(0f, 0f, currentRoll);
             }
             else if (currentState == MovementState.Vaulting)
             {
@@ -1129,10 +1257,9 @@ namespace VectorParkour
 
                     if (jumpBufferTimer > 0f && (grounded || airborneTimer <= coyoteTime))
                     {
-                        if (TryDetectVaultObstacle(out Collider vaultCol, out float distToObs))
+                        if (TryDetectVaultObstacle(out Collider vaultCol))
                         {
-                            VaultQuality q = EvaluateVaultQuality(distToObs);
-                            ExecuteVault(vaultCol, q);
+                            ExecuteVault(vaultCol);
                         }
                         else
                         {
@@ -1163,19 +1290,19 @@ namespace VectorParkour
                     verticalVelocity += gravity * dt;
                     verticalVelocity = Mathf.Max(verticalVelocity, maxFallSpeed);
 
-                    // Mid-air contextual vault if player jumped slightly early into a vault block
-                    if (TryDetectVaultObstacle(out Collider airVaultCol, out float airDist) && transform.position.y < airVaultCol.bounds.max.y + 0.2f)
+                    // Mid-air contextual vault if jump was buffered ahead of a vault block
+                    if (jumpBufferTimer > 0f && TryDetectVaultObstacle(out Collider airVaultCol))
                     {
-                        VaultQuality q = EvaluateVaultQuality(airDist);
-                        ExecuteVault(airVaultCol, q);
+                        ExecuteVault(airVaultCol);
                         return;
                     }
 
-                    if (wallCooldownTimer <= 0f && CheckWallRunSurface(out int jumpSide, out RaycastHit jumpHit))
+                    if (CheckWallRunSurface(out int jumpSide, out RaycastHit jumpHit))
                     {
+                        bool canAttach = (jumpSide != lastWallSide) || (sameWallCooldownTimer <= 0f);
                         bool inputMatches = (jumpSide == -1 && (leftWallBufferTimer > 0f || isLeftWallHeld)) ||
                                             (jumpSide == 1 && (rightWallBufferTimer > 0f || isRightWallHeld));
-                        if (inputMatches)
+                        if (canAttach && inputMatches)
                         {
                             leftWallBufferTimer = 0f;
                             rightWallBufferTimer = 0f;
@@ -1195,11 +1322,12 @@ namespace VectorParkour
                     verticalVelocity += gravity * dt;
                     verticalVelocity = Mathf.Max(verticalVelocity, maxFallSpeed);
 
-                    if (wallCooldownTimer <= 0f && CheckWallRunSurface(out int fallSide, out RaycastHit fallHit))
+                    if (CheckWallRunSurface(out int fallSide, out RaycastHit fallHit))
                     {
+                        bool canAttach = (fallSide != lastWallSide) || (sameWallCooldownTimer <= 0f);
                         bool inputMatches = (fallSide == -1 && (leftWallBufferTimer > 0f || isLeftWallHeld)) ||
                                             (fallSide == 1 && (rightWallBufferTimer > 0f || isRightWallHeld));
-                        if (inputMatches)
+                        if (canAttach && inputMatches)
                         {
                             leftWallBufferTimer = 0f;
                             rightWallBufferTimer = 0f;
@@ -1223,37 +1351,19 @@ namespace VectorParkour
                 case MovementState.WallRunning:
                     wallRunTimer += dt;
 
-                    // Vertical climb physics via Space key
-                    if (verticalVelocity > 0f)
+                    // Parabolic wall-run trajectory: gentle reduced gravity (-5.5 m/s^2) until slow controlled glide (-1.0 m/s)
+                    if (verticalVelocity > -1.0f)
                     {
-                        verticalVelocity += wallClimbGravity * dt;
-                        if (verticalVelocity < 0f)
-                        {
-                            verticalVelocity = 0f; // Settle at new climbed altitude along the wall
-                        }
+                        verticalVelocity += -5.5f * dt;
+                        if (verticalVelocity < -1.0f) verticalVelocity = -1.0f;
                     }
-                    else if (verticalVelocity < 0f)
+                    else if (verticalVelocity < -1.0f)
                     {
-                        verticalVelocity = Mathf.MoveTowards(verticalVelocity, -0.6f, 6.0f * dt);
+                        verticalVelocity = Mathf.MoveTowards(verticalVelocity, -1.0f, 6.0f * dt);
                     }
 
-                    // Soft dampening near max climb ceiling
-                    if (transform.position.y >= maxWallClimbY && verticalVelocity > 0f)
-                    {
-                        verticalVelocity = Mathf.MoveTowards(verticalVelocity, 0f, 20.0f * dt);
-                    }
-
-                    // Check if upper platform is reached while climbing
-                    Vector3 downProbe = transform.position + Vector3.up * 0.2f;
-                    bool hasFloorBelow = Physics.Raycast(downProbe, Vector3.down, out RaycastHit wallFloorHit, 1.4f, playerLayerMask, QueryTriggerInteraction.Ignore);
-                    Vector3 forwardDownProbe = transform.position + Vector3.forward * 0.8f + Vector3.up * 0.2f;
-                    bool forwardFloor = Physics.Raycast(forwardDownProbe, Vector3.down, out RaycastHit fwdFloorHit, 1.6f, playerLayerMask, QueryTriggerInteraction.Ignore);
-
-                    if (transform.position.y >= 5.8f && (grounded || (hasFloorBelow && wallFloorHit.point.y >= 5.7f) || (forwardFloor && fwdFloorHit.point.y >= 5.7f)))
-                    {
-                        EndWallRunAndLand();
-                        return;
-                    }
+                    // Smooth mantle transition if ascending near/at upper platform
+                    if (CheckAndHandleUpperPlatformMantle(grounded)) return;
 
                     Vector3 probeDir = wallSide == -1 ? -Vector3.right : Vector3.right;
                     Vector3 origin = transform.position + Vector3.up * 1.0f;
@@ -1277,20 +1387,28 @@ namespace VectorParkour
 
                 case MovementState.WallAttached:
                     wallAttachedTimer += dt;
-                    verticalVelocity = 0f;
 
-                    bool floorBelowAttached = Physics.Raycast(transform.position + Vector3.up * 0.2f, Vector3.down, out RaycastHit attachGroundHit, 0.6f, playerLayerMask, QueryTriggerInteraction.Ignore);
-                    if ((grounded || (floorBelowAttached && attachGroundHit.point.y >= 5.7f)) && transform.position.y > 4.0f)
+                    // Parabolic wall glide
+                    if (verticalVelocity > -1.0f)
                     {
-                        ExitWallJumpTraversal(true);
-                        Land();
-                        return;
+                        verticalVelocity += -5.5f * dt;
+                        if (verticalVelocity < -1.0f) verticalVelocity = -1.0f;
+                    }
+                    else if (verticalVelocity < -1.0f)
+                    {
+                        verticalVelocity = Mathf.MoveTowards(verticalVelocity, -1.0f, 6.0f * dt);
                     }
 
-                    if (wallAttachedTimer > wallAttachedMaxTime)
+                    if (CheckAndHandleUpperPlatformMantle(grounded)) return;
+
+                    // Maintain forward speed (~1.2x baseSpeed)
+                    currentSpeed = Mathf.Max(currentSpeed, baseSpeed * wallRunSpeedMultiplier);
+
+                    // Seamless transition to running along the wall after brief latch window
+                    if (wallAttachedTimer >= 0.18f)
                     {
-                        ExitWallJumpTraversal(false);
-                        currentState = MovementState.Falling;
+                        currentState = MovementState.WallRunning;
+                        wallRunTimer = 0f;
                         return;
                     }
                     break;
@@ -1300,13 +1418,7 @@ namespace VectorParkour
                     verticalVelocity += wallJumpGravity * dt;
 
                     // 1. Check if landed on upper platform during transfer
-                    bool floorBelowTransfer = Physics.Raycast(transform.position + Vector3.up * 0.2f, Vector3.down, out RaycastHit transferGroundHit, 0.6f, playerLayerMask, QueryTriggerInteraction.Ignore);
-                    if ((grounded || (floorBelowTransfer && transferGroundHit.point.y >= 5.7f)) && transform.position.y > 4.0f && verticalVelocity <= 1.5f)
-                    {
-                        ExitWallJumpTraversal(true);
-                        Land();
-                        return;
-                    }
+                    if (CheckAndHandleUpperPlatformMantle(grounded)) return;
 
                     // 2. Check for attachment with the target wall
                     float distToTarget = Mathf.Abs(transform.position.x - targetWallJumpX);
@@ -1316,7 +1428,7 @@ namespace VectorParkour
                     bool targetWallInSight = Physics.Raycast(probeTargetOrigin, probeTargetDir, out RaycastHit targetHit, wallDetectionRange, playerLayerMask, QueryTriggerInteraction.Ignore) && IsWallRunObstacle(targetHit.collider);
 
                     float ccRadius = characterController != null ? characterController.radius : 0.35f;
-                    if ((distToTarget <= wallAttachmentTolerance || (targetWallInSight && targetHit.distance <= (ccRadius + 0.15f))) && wallJumpTimer > 0.12f)
+                    if ((distToTarget <= wallAttachmentTolerance || (targetWallInSight && targetHit.distance <= (ccRadius + 0.2f))) && wallJumpTimer > 0.08f)
                     {
                         AttachToWall(targetWallSide, targetWallInSight ? targetHit : default);
                         return;
@@ -1345,10 +1457,9 @@ namespace VectorParkour
                     if (jumpBufferTimer > 0f && HasHeadroom())
                     {
                         EndSlideDirect();
-                        if (TryDetectVaultObstacle(out Collider slideVaultCol, out float slideDist))
+                        if (TryDetectVaultObstacle(out Collider slideVaultCol))
                         {
-                            VaultQuality q = EvaluateVaultQuality(slideDist);
-                            ExecuteVault(slideVaultCol, q);
+                            ExecuteVault(slideVaultCol);
                         }
                         else
                         {
@@ -1383,6 +1494,8 @@ namespace VectorParkour
             airborneTimer = 0f;
             verticalVelocity = -2.0f;
             currentState = MovementState.Running;
+            lastWallSide = 0;
+            sameWallCooldownTimer = 0f;
 
             if (jumpBufferTimer > 0f)
             {
@@ -1459,7 +1572,7 @@ namespace VectorParkour
                 return;
             }
 
-            // 2. Wall Running Motion
+            // 2. Wall Running Motion (Fluid parabolic forward drive)
             if (currentState == MovementState.WallRunning)
             {
                 currentSpeed = baseSpeed * wallRunSpeedMultiplier;
@@ -1471,20 +1584,11 @@ namespace VectorParkour
                 return;
             }
 
-            // 2b. Vertical Wall-Jump Traversal Motion
+            // 2b. Wall Attached Motion (Eliminate zero-speed freeze, maintain forward speed)
             if (currentState == MovementState.WallAttached)
             {
-                currentSpeed = 0f;
-                float stepX = currentAttachedWallX - transform.position.x;
-                Vector3 moveStep = new Vector3(stepX, verticalVelocity * dt, 0f);
-                characterController.Move(moveStep);
-                return;
-            }
-
-            if (currentState == MovementState.WallJumpTransferring)
-            {
-                currentSpeed = wallJumpForwardSpeed;
-                float newX = Mathf.MoveTowards(transform.position.x, targetWallJumpX, wallJumpHorizontalSpeed * dt);
+                currentSpeed = baseSpeed * wallRunSpeedMultiplier;
+                float newX = Mathf.SmoothDamp(transform.position.x, currentAttachedWallX, ref lateralVelocity, 0.05f);
                 float stepX = newX - transform.position.x;
 
                 Vector3 moveStep = new Vector3(stepX, verticalVelocity * dt, currentSpeed * dt);
@@ -1492,7 +1596,36 @@ namespace VectorParkour
                 return;
             }
 
-            // 3. Standard Running / Jumping / Sliding Motion
+            // 2c. Wall-to-Wall Jump Transferring Motion (Smooth high-speed curve across corridor)
+            if (currentState == MovementState.WallJumpTransferring)
+            {
+                currentSpeed = baseSpeed * 1.15f;
+                float newX = Mathf.SmoothDamp(transform.position.x, targetWallJumpX, ref lateralVelocity, 0.11f, 12.0f, dt);
+                float stepX = newX - transform.position.x;
+
+                Vector3 moveStep = new Vector3(stepX, verticalVelocity * dt, currentSpeed * dt);
+                characterController.Move(moveStep);
+                return;
+            }
+
+            // 3. Smooth Top-Ledge Mantle curve onto upper deck (0.15s vertical curve, no snapping)
+            if (mantleSmoothTimer > 0f)
+            {
+                mantleSmoothTimer -= dt;
+                float tMantle = 1f - Mathf.Clamp01(mantleSmoothTimer / mantleDuration);
+                float smoothY = Mathf.Lerp(mantleStartY, mantleTargetY, Mathf.SmoothStep(0f, 1f, tMantle));
+                float stepY = smoothY - transform.position.y;
+                verticalVelocity = 0f;
+
+                float dampedMantleX = Mathf.SmoothDamp(transform.position.x, _trackCenterX, ref lateralVelocity, lateralSmoothTime);
+                float lateralMantleStep = dampedMantleX - transform.position.x;
+
+                Vector3 step = new Vector3(lateralMantleStep, stepY, currentSpeed * dt);
+                characterController.Move(step);
+                return;
+            }
+
+            // 4. Standard Running / Jumping / Sliding Motion
             float accelRatio = Mathf.Clamp01(runTimer / accelerationTime);
             float targetBase = Mathf.SmoothStep(0f, baseSpeed, accelRatio);
             float speed = targetBase * (isSprinting ? sprintMultiplier : 1.0f);
@@ -1641,22 +1774,13 @@ namespace VectorParkour
         }
 
         /// <summary>
-        /// Connected to VaultDetector child trigger collider.
+        /// Backward compatibility stub for existing scene prefabs / VaultDetector triggers.
+        /// Speed-scaled vault detection is now self-contained via Physics.BoxCast.
         /// </summary>
+        [System.Obsolete("Vault detection is now handled self-contained via Physics.BoxCast.")]
         public void SetInVaultTrigger(bool inTrigger, Transform obstacleTransform)
         {
-            inVaultZone = inTrigger;
-            pendingVaultCollider = (inTrigger && obstacleTransform != null) ? obstacleTransform.GetComponent<Collider>() : null;
-
-            // Immediate execution if jump was already buffered before entering the trigger zone
-            if (inVaultZone && pendingVaultCollider != null && jumpBufferTimer > 0f && currentState != MovementState.Vaulting)
-            {
-                float frontZ = pendingVaultCollider.bounds.min.z;
-                float playerFrontZ = transform.position.z + (characterController != null ? characterController.radius : 0.35f);
-                float dist = Mathf.Max(0f, frontZ - playerFrontZ);
-                VaultQuality q = EvaluateVaultQuality(dist);
-                ExecuteVault(pendingVaultCollider, q);
-            }
+            // No-op stub for backward compatibility
         }
 
         #endregion
@@ -1666,14 +1790,15 @@ namespace VectorParkour
         private void UpdateAnimator()
         {
             if (animator == null) return;
-            animator.SetBool(AnimIsJumping, IsJumping);
+            bool isAirborneAction = (currentState == MovementState.Jumping || currentState == MovementState.Falling || currentState == MovementState.WallJumpTransferring);
+            animator.SetBool(AnimIsJumping, isAirborneAction || (!hasAnimWallRunning && (currentState == MovementState.WallRunning || currentState == MovementState.WallAttached)));
             animator.SetBool(AnimIsSliding, IsSliding);
             animator.SetBool(AnimIsVaulting, IsVaulting);
             if (hasAnimVaultType) animator.SetInteger(AnimVaultType, (int)currentVaultQuality);
             if (hasAnimFalling) animator.SetBool(AnimIsFalling, currentState == MovementState.Falling);
-            if (hasAnimWallRunning) animator.SetBool(AnimIsWallRunning, currentState == MovementState.WallRunning || currentState == MovementState.WallAttached);
+            if (hasAnimWallRunning) animator.SetBool(AnimIsWallRunning, currentState == MovementState.WallRunning || currentState == MovementState.WallAttached || currentState == MovementState.WallJumpTransferring);
             if (hasAnimStumbling) animator.SetBool(AnimIsStumbling, isStumbling);
-            if (hasAnimGrounded) animator.SetBool(AnimIsGrounded, characterController != null && characterController.isGrounded);
+            if (hasAnimGrounded) animator.SetBool(AnimIsGrounded, characterController != null && characterController.isGrounded && currentState != MovementState.WallRunning && currentState != MovementState.WallAttached && currentState != MovementState.WallJumpTransferring);
         }
 
         #endregion
@@ -1737,8 +1862,6 @@ namespace VectorParkour
             isSprinting = false;
             isStumbling = false;
             hasCompletedLevel = false;
-            inVaultZone = false;
-            pendingVaultCollider = null;
             vaultTimer = 0f;
             currentVaultQuality = VaultQuality.None;
             vaultRatingDisplayTimer = 0f;
@@ -1749,6 +1872,10 @@ namespace VectorParkour
             lastStumbleZ = -999f;
             lastClearedObstacleZ = -999f;
             wallSide = 0;
+            lastWallSide = 0;
+            sameWallCooldownTimer = 0f;
+            wallJumpStartX = 0f;
+            mantleSmoothTimer = 0f;
             activeWallCollider = null;
             wallRunTimer = 0f;
             wallCooldownTimer = 0f;

@@ -56293,8 +56293,8 @@ MonoBehaviour:
   defaultEulerAngle: {x: 9, y: 24, z: 0}
   alternateOffset: {x: 3.4, y: 1.9, z: -4.2}
   alternateEulerAngle: {x: 9, y: -24, z: 0}
-  overheadOffset: {x: 0, y: 7.5, z: -3}
-  overheadEulerAngle: {x: 62, y: 0, z: 0}
+  overheadOffset: {x: 0, y: 3.2, z: -4.5}
+  overheadEulerAngle: {x: 22, y: 0, z: 0}
   overheadTransitionSpeed: 5
   sideTransitionSpeed: 6
   minSideDuration: 0.35
@@ -56306,7 +56306,7 @@ MonoBehaviour:
     m_Bits: 4294967295
   smoothTimeX: 0.06
   smoothTimeY: 0.35
-  smoothTimeZ: 0.06
+  smoothTimeZ: 0.03
   baseFOV: 60
   sprintFOV: 68
   threatFOV: 52
