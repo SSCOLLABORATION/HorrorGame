@@ -253,43 +253,37 @@ namespace VectorParkour.EditorScripts
                     // Auto-jump/vault for block at Z=14
                     if (currentPos.z >= 12.0f && currentPos.z <= 13.5f && player.CurrentState == MovementState.Running)
                     {
-                        var jf = typeof(PlayerParkourController).GetField("jumpBufferTimer", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-                        jf.SetValue(player, 0.18f);
+                        player.InjectJumpInput();
                     }
 
                     // Auto-slide for barrier at Z=26
                     if (currentPos.z >= 24.0f && currentPos.z <= 25.5f && player.CurrentState == MovementState.Running)
                     {
-                        var sf = typeof(PlayerParkourController).GetField("slideBufferTimer", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-                        sf.SetValue(player, 0.18f);
+                        player.InjectSlideInput();
                     }
 
                     // Auto-jump for gap at Z=35 (Roof 1 ends at 35m, Roof 2 starts at 40m)
-                    if (currentPos.z >= 33.0f && currentPos.z <= 34.5f && player.CurrentState == MovementState.Running)
+                    if (currentPos.z >= 33.5f && currentPos.z <= 34.5f && player.CurrentState == MovementState.Running)
                     {
-                        var jf = typeof(PlayerParkourController).GetField("jumpBufferTimer", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-                        jf.SetValue(player, 0.18f);
+                        player.InjectJumpInput();
                     }
 
                     // Auto-vault/jump for block at Z=52
                     if (currentPos.z >= 50.0f && currentPos.z <= 51.5f && player.CurrentState == MovementState.Running)
                     {
-                        var jf = typeof(PlayerParkourController).GetField("jumpBufferTimer", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-                        jf.SetValue(player, 0.18f);
+                        player.InjectJumpInput();
                     }
 
                     // Auto-slide for barrier at Z=68
                     if (currentPos.z >= 66.0f && currentPos.z <= 67.5f && player.CurrentState == MovementState.Running)
                     {
-                        var sf = typeof(PlayerParkourController).GetField("slideBufferTimer", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-                        sf.SetValue(player, 0.18f);
+                        player.InjectSlideInput();
                     }
 
                     // Auto-jump for gap at Z=80 (Roof 2 ends at 80m, Roof 3 starts at 85m)
-                    if (currentPos.z >= 78.0f && currentPos.z <= 79.5f && player.CurrentState == MovementState.Running)
+                    if (currentPos.z >= 78.5f && currentPos.z <= 79.5f && player.CurrentState == MovementState.Running)
                     {
-                        var jf = typeof(PlayerParkourController).GetField("jumpBufferTimer", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-                        jf.SetValue(player, 0.18f);
+                        player.InjectJumpInput();
                     }
 
                     var cam = Camera.main;

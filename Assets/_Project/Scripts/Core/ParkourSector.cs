@@ -42,7 +42,7 @@ namespace Vector3D.Core
 
         public Vector3 PlayerSpawnPosition => playerSpawnPoint != null ? playerSpawnPoint.position : transform.position + new Vector3(trackCenterX, 1.1f, 0f);
         public Vector3 ChaserSpawnPosition => chaserSpawnPoint != null ? chaserSpawnPoint.position : transform.position + new Vector3(trackCenterX, 1.1f, -6f);
-        public FinishLine FinishGate => finishGate;
+        public FinishLine FinishGate => finishGate != null ? finishGate : GetComponentInChildren<FinishLine>(true);
 
         private void Awake()
         {

@@ -26,7 +26,9 @@ namespace VectorParkour
                 }
 
                 currentVaultTarget = other.transform;
+#pragma warning disable 0618
                 playerController?.SetInVaultTrigger(true, currentVaultTarget);
+#pragma warning restore 0618
             }
         }
 
@@ -40,7 +42,9 @@ namespace VectorParkour
                 }
 
                 currentVaultTarget = null;
+#pragma warning disable 0618
                 playerController?.SetInVaultTrigger(false, null);
+#pragma warning restore 0618
             }
         }
     }

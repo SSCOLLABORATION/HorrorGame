@@ -104,6 +104,9 @@ namespace VectorParkour
         private Vector3 defaultVisualScale = Vector3.one;
         private Vector3 defaultVisualLocalPos = Vector3.zero;
 
+        // Pre-allocated raycast buffer to avoid GC allocations during obstacle detection
+        private readonly RaycastHit[] obstacleHits = new RaycastHit[8];
+
         public float DistanceToPlayer
         {
             get
@@ -262,12 +265,13 @@ namespace VectorParkour
             }
             else if (playerStumbling)
             {
-                // Permanently close the follow distance when the player stumbles so 1-2 stumbles = caught
-                creepOffset = Mathf.Min(baseFollowDistance - 0.3f, creepOffset + 7.5f * dt);
+                // Firmly close follow distance on stumble, allowing 1 stumble recovery but 2 consecutive stumbles = caught
+                creepOffset = Mathf.Min(baseFollowDistance - 1.2f, creepOffset + 3.0f * dt);
             }
             else
             {
-                creepOffset = Mathf.Min(baseFollowDistance - 2.2f, creepOffset + creepRate * dt);
+                // During clean running without stumbles, maintain comfortable follow distance (~4.2m)
+                creepOffset = Mathf.Min(baseFollowDistance - 4.2f, creepOffset + creepRate * dt);
             }
 
             float desiredDistance = Mathf.Max(0.3f, baseFollowDistance - creepOffset);
@@ -275,8 +279,8 @@ namespace VectorParkour
             float targetSpeed;
             if (playerStumbling)
             {
-                // Surge aggressively past player's slowed speed to tackle them
-                targetSpeed = pBaseSpeed * 1.22f;
+                // Controlled catch-up surge during stumble
+                targetSpeed = pBaseSpeed * 1.08f;
             }
             else
             {
@@ -295,9 +299,8 @@ namespace VectorParkour
             {
                 vaultTimer += dt;
                 float t = Mathf.Clamp01(vaultTimer / vaultDuration);
-                float smoothT = Mathf.SmoothStep(0f, 1f, t);
 
-                float newZ = Mathf.Lerp(vaultStartPos.z, vaultTargetZ, smoothT);
+                float newZ = Mathf.Lerp(vaultStartPos.z, vaultTargetZ, t);
                 float arcY = Mathf.Sin(t * Mathf.PI) * (vaultPeakY - vaultStartPos.y);
                 float newY = vaultStartPos.y + arcY;
                 float newX = Mathf.SmoothDamp(transform.position.x, _trackCenterX, ref lateralVelocity, 0.1f);
@@ -334,9 +337,9 @@ namespace VectorParkour
                 verticalVelocity = Mathf.Max(verticalVelocity, -28f);
 
                 Vector3 downProbe = transform.position + Vector3.up * 0.5f;
-                bool reachedLanding = Physics.Raycast(downProbe, Vector3.down, out RaycastHit groundHit, 1.4f, ~0, QueryTriggerInteraction.Ignore) && groundHit.point.y > -0.5f;
+                bool reachedLanding = (gapTraverseTimer > 0.35f) && Physics.Raycast(downProbe, Vector3.down, out RaycastHit groundHit, 1.4f, ~0, QueryTriggerInteraction.Ignore) && groundHit.point.y > -0.5f;
 
-                if (reachedLanding || (characterController.isGrounded && gapTraverseTimer > 0.15f))
+                if (gapTraverseTimer > 0.35f && (reachedLanding || characterController.isGrounded))
                 {
                     isTraversingGap = false;
                     isAIJumping = false;
@@ -462,20 +465,32 @@ namespace VectorParkour
             Vector3 originWaist = transform.position + Vector3.up * 0.7f;
             Vector3 originHead = transform.position + Vector3.up * 1.6f;
 
-            // 1. Check for VaultBlock ahead
-            if (Physics.Raycast(originWaist, Vector3.forward, out RaycastHit hitWaist, detectionRange, ~0, QueryTriggerInteraction.Collide))
+            // 1. Check for VaultBlock ahead (ignoring player body and triggers)
+            int waistHitCount = Physics.RaycastNonAlloc(originWaist, Vector3.forward, obstacleHits, detectionRange, ~0, QueryTriggerInteraction.Collide);
+            for (int i = 0; i < waistHitCount; i++)
             {
-                if (hitWaist.collider.CompareTag("Obstacle_Vault"))
+                var col = obstacleHits[i].collider;
+                if (col == null) continue;
+                if (targetPlayer != null && (col.transform == targetPlayer || col.transform.IsChildOf(targetPlayer))) continue;
+                if (col.transform == transform || col.transform.IsChildOf(transform)) continue;
+
+                if (col.CompareTag("Obstacle_Vault"))
                 {
-                    StartAIVault(hitWaist.collider);
+                    StartAIVault(col);
                     return;
                 }
             }
 
-            // 2. Check for SlideBarrier ahead (with increased lookahead to anticipate landing)
-            if (Physics.Raycast(originHead, Vector3.forward, out RaycastHit hitHead, detectionRange + 0.8f, ~0, QueryTriggerInteraction.Collide))
+            // 2. Check for SlideBarrier ahead (with increased lookahead to anticipate approach)
+            int headHitCount = Physics.RaycastNonAlloc(originHead, Vector3.forward, obstacleHits, detectionRange + 0.8f, ~0, QueryTriggerInteraction.Collide);
+            for (int i = 0; i < headHitCount; i++)
             {
-                if (hitHead.collider.CompareTag("Obstacle_Slide") && !isSliding)
+                var col = obstacleHits[i].collider;
+                if (col == null) continue;
+                if (targetPlayer != null && (col.transform == targetPlayer || col.transform.IsChildOf(targetPlayer))) continue;
+                if (col.transform == transform || col.transform.IsChildOf(transform)) continue;
+
+                if (col.CompareTag("Obstacle_Slide") && !isSliding)
                 {
                     StartAISlide();
                     return;
@@ -483,20 +498,17 @@ namespace VectorParkour
             }
 
             // 3. Check for Gaps in floor ahead
-            if (!isTraversingGap && characterController.isGrounded)
+            if (!isTraversingGap && (characterController.isGrounded || airborneTimer < 0.15f))
             {
-                Vector3 gapCheck1 = transform.position + Vector3.forward * 1.8f + Vector3.up * 0.3f;
-                Vector3 gapCheck2 = transform.position + Vector3.forward * 3.5f + Vector3.up * 0.3f;
+                Vector3 gapCheck = transform.position + Vector3.forward * 1.4f + Vector3.up * 0.3f;
+                bool hasFloorAhead = Physics.Raycast(gapCheck, Vector3.down, 2.0f, ~0, QueryTriggerInteraction.Ignore);
 
-                bool floor1 = Physics.Raycast(gapCheck1, Vector3.down, 2.0f, ~0, QueryTriggerInteraction.Ignore);
-                bool floor2 = Physics.Raycast(gapCheck2, Vector3.down, 2.0f, ~0, QueryTriggerInteraction.Ignore);
-
-                if (!floor1 && !floor2)
+                if (!hasFloorAhead)
                 {
                     isAIJumping = true;
                     isTraversingGap = true;
                     gapTraverseTimer = 0f;
-                    verticalVelocity = jumpForce;
+                    verticalVelocity = 10.2f;
                 }
             }
         }
@@ -653,6 +665,10 @@ namespace VectorParkour
                 }
 
                 visualRoot.localRotation = Quaternion.Slerp(visualRoot.localRotation, targetRot, smoothFactor);
+                if (targetRot == Quaternion.identity && Quaternion.Angle(visualRoot.localRotation, Quaternion.identity) < 0.25f)
+                {
+                    visualRoot.localRotation = Quaternion.identity;
+                }
                 return;
             }
 

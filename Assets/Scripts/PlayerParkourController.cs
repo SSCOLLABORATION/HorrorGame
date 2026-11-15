@@ -226,6 +226,7 @@ namespace VectorParkour
         private bool injectedShift = false;
         private int injectedJumpDir = 0;
         private bool injectedJump = false;
+        private bool injectedSlide = false;
 
         /// <summary>
         /// Explicit input injector for manual wall-run triggers and automated testing.
@@ -260,6 +261,11 @@ namespace VectorParkour
             injectedJump = true;
         }
 
+        public void InjectSlideInput()
+        {
+            injectedSlide = true;
+        }
+
         public void InjectDirectionalJump(int direction)
         {
             injectedJumpDir = direction;
@@ -286,6 +292,12 @@ namespace VectorParkour
         private Vector3 vaultStartPos;
         private float vaultTargetZ;
         private float vaultPeakY;
+        private float vaultLandingY;
+        private float vaultHurdleStartZ;
+        private float vaultHurdleEndZ;
+        private float vaultObstacleFrontZ;
+        private float vaultObstacleBackZ;
+        private float vaultObstacleTopY;
 
         // Wall Run State Variables (Titanfall 2 Parabolic Trajectory & Chaining)
         private int wallSide = 0; // -1 for left wall, +1 for right wall, 0 for none
@@ -323,10 +335,12 @@ namespace VectorParkour
         private bool isSprinting = false;
         private bool isStumbling = false;
         private bool hasCompletedLevel = false;
+        private float lastGroundedY = 0f;
 
         // Collider Geometry Cache
         private Vector3 standingCenter;
         private Vector3 slidingCenter;
+        private Collider activeVaultCollider;
 
         // Stumble Debounce
         private float lastStumbleZ = -999f;
@@ -404,8 +418,7 @@ namespace VectorParkour
                 var bc = vd.GetComponent<BoxCollider>();
                 if (bc != null)
                 {
-                    bc.center = new Vector3(0f, 0.90f, 3.20f);
-                    bc.size = new Vector3(4.20f, 1.80f, 6.00f);
+                    bc.enabled = false;
                 }
             }
 
@@ -460,8 +473,25 @@ namespace VectorParkour
             UpdateVisualTilt();
             UpdateAnimator();
             CheckBoundsAndGoals();
+            UpdateChaserProximityFeedback();
 
             justStartedWallRun = false;
+        }
+
+        private void UpdateChaserProximityFeedback()
+        {
+            if (currentState == MovementState.Dead || hasCompletedLevel || Time.timeScale <= 0f) return;
+
+            ChaserAI chaser = UnityEngine.Object.FindFirstObjectByType<ChaserAI>();
+            if (chaser != null)
+            {
+                float dist = transform.position.z - chaser.transform.position.z;
+                if (dist > 0f && dist < 3.8f)
+                {
+                    float dangerFactor = 1f - (dist / 3.8f);
+                    Vector3D.Core.AudioManager.Instance?.PlayHeartbeat(dangerFactor);
+                }
+            }
         }
 
         #region Timers & Input
@@ -534,6 +564,12 @@ namespace VectorParkour
             {
                 jumpDown = true;
                 injectedJump = false;
+            }
+
+            if (injectedSlide)
+            {
+                slideDown = true;
+                injectedSlide = false;
             }
 
             if (injectedJumpDir == -1)
@@ -773,20 +809,15 @@ namespace VectorParkour
 
         public VaultQuality EvaluateVaultQuality(float distance)
         {
-            // At running speed ~9.5 m/s:
-            // >= 4.2m (up to 6.2m): Pressed earlier than required -> Long Jump
-            // 2.4m .. 4.2m: Input received in expected time frame (forgiving window) -> Good Jump
-            // 0.45m .. 2.4m: Input received in sweet spot interval (generous sweet spot) -> Perfect Jump
-            // < 0.45m: Missed the correct interval (too late / on collision) -> Imperfect Jump
-            if (distance >= 4.2f)
+            if (distance >= 3.5f)
             {
                 return VaultQuality.Long;
             }
-            else if (distance >= 2.4f)
+            else if (distance >= 1.8f)
             {
                 return VaultQuality.Good;
             }
-            else if (distance >= 0.45f)
+            else if (distance >= 0.2f)
             {
                 return VaultQuality.Perfect;
             }
@@ -798,16 +829,36 @@ namespace VectorParkour
 
         public bool TryDetectVaultObstacle(out Collider vaultCollider)
         {
-            float lookAheadDist = Mathf.Max(2.2f, currentSpeed * 0.28f);
+            // 1. Immediate overlap check (covers 0m .. 0.9m and touching/overlapping blocks ahead)
+            Vector3 overlapCenter = transform.position + Vector3.up * 0.7f + Vector3.forward * 0.4f;
+            Vector3 overlapHalfExtents = new Vector3(0.6f, 0.6f, 0.5f);
+            Collider[] overlaps = Physics.OverlapBox(overlapCenter, overlapHalfExtents, Quaternion.identity, playerLayerMask, QueryTriggerInteraction.Collide);
+            for (int i = 0; i < overlaps.Length; i++)
+            {
+                if (overlaps[i] != null && overlaps[i].CompareTag("Obstacle_Vault"))
+                {
+                    if (overlaps[i].bounds.max.z > transform.position.z + 0.15f)
+                    {
+                        vaultCollider = overlaps[i];
+                        return true;
+                    }
+                }
+            }
+
+            // 2. Forward sweep check (covers up to 4.8m+)
+            float lookAheadDist = Mathf.Max(4.8f, currentSpeed * 0.45f);
             Vector3 boxCenter = transform.position + Vector3.up * 0.7f;
-            Vector3 halfExtents = new Vector3(0.4f, 0.45f, 0.1f);
+            Vector3 halfExtents = new Vector3(0.6f, 0.55f, 0.2f);
 
             if (Physics.BoxCast(boxCenter, halfExtents, Vector3.forward, out RaycastHit hit, Quaternion.identity, lookAheadDist, playerLayerMask, QueryTriggerInteraction.Collide))
             {
-                if (hit.collider.CompareTag("Obstacle_Vault"))
+                if (hit.collider != null && hit.collider.CompareTag("Obstacle_Vault"))
                 {
-                    vaultCollider = hit.collider;
-                    return true;
+                    if (hit.collider.bounds.max.z > transform.position.z + 0.15f)
+                    {
+                        vaultCollider = hit.collider;
+                        return true;
+                    }
                 }
             }
 
@@ -832,6 +883,7 @@ namespace VectorParkour
         public void ExecuteVault(Collider obstacle, VaultQuality quality)
         {
             if (currentState == MovementState.Sliding) EndSlideDirect();
+            if (currentState == MovementState.Vaulting) EndVaultDirect();
 
             currentState = MovementState.Vaulting;
             currentVaultQuality = quality;
@@ -840,62 +892,130 @@ namespace VectorParkour
             vaultStartPos = transform.position;
             verticalVelocity = 0f;
 
-            Bounds b = obstacle.bounds;
-            lastClearedObstacleZ = obstacle.transform.position.z;
+            // Geometry bounds
+            float radius = (characterController != null) ? characterController.radius : 0.35f;
+            Bounds b = obstacle != null ? obstacle.bounds : new Bounds(transform.position + Vector3.forward * 1.5f, Vector3.one);
+            vaultObstacleFrontZ = b.min.z;
+            vaultObstacleBackZ = b.max.z;
+            vaultObstacleTopY = b.max.y;
+            vaultLandingY = vaultStartPos.y;
+            vaultHurdleStartZ = vaultObstacleFrontZ - radius;
+            vaultHurdleEndZ = Mathf.Max(vaultObstacleBackZ + radius, vaultStartPos.z + 0.6f);
+            vaultTargetZ = Mathf.Max(vaultHurdleEndZ + 1.25f, vaultStartPos.z + 1.4f);
+            lastClearedObstacleZ = obstacle != null ? obstacle.transform.position.z : transform.position.z;
 
-            // Configure trajectory, duration, and speed based on vault timing quality
+            // Completely eliminate collider snagging / backward hitching:
+            // Temporarily set obstacle to trigger and ignore collision during vault
+            if (obstacle != null)
+            {
+                activeVaultCollider = obstacle;
+                activeVaultCollider.isTrigger = true;
+                if (characterController != null)
+                {
+                    Physics.IgnoreCollision(characterController, activeVaultCollider, true);
+                }
+            }
+
+            // Compact / tuck capsule geometry during vault
+            if (characterController != null)
+            {
+                characterController.height = 0.85f;
+                float groundY = standingCenter.y - (standingHeight * 0.5f);
+                characterController.center = new Vector3(standingCenter.x, groundY + 0.425f + 0.35f, standingCenter.z);
+            }
+
+            // Fluid continuous momentum: maintain or boost forward velocity
+            float forwardSpeed = Mathf.Max(currentSpeed, baseSpeed);
             switch (quality)
             {
                 case VaultQuality.Long:
-                    // Pressed earlier than required -> Long Jump leaping from far (slower, floating airtime)
-                    vaultDuration = 0.85f;
-                    vaultPeakY = b.max.y + 0.45f;
-                    vaultTargetZ = b.max.z + 1.6f;
-                    currentSpeed = baseSpeed * 1.05f;
-                    SetVaultRatingBanner("LONG JUMP (EARLY)", new Color(1.0f, 0.65f, 0.2f));
+                    forwardSpeed *= 1.05f;
+                    vaultPeakY = vaultObstacleTopY + 0.28f;
+                    SetVaultRatingBanner("LONG VAULT", new Color(1.0f, 0.70f, 0.2f));
                     break;
 
                 case VaultQuality.Good:
-                    // Input received in expected time frame
-                    vaultDuration = 0.45f;
-                    vaultPeakY = b.max.y + 0.25f;
-                    vaultTargetZ = b.max.z + 1.2f;
-                    currentSpeed = baseSpeed;
+                    forwardSpeed *= 1.10f;
+                    vaultPeakY = vaultObstacleTopY + 0.24f;
                     SetVaultRatingBanner("GOOD VAULT", new Color(0.2f, 1.0f, 0.5f));
                     break;
 
                 case VaultQuality.Perfect:
-                    // Input received in sweet spot interval
-                    vaultDuration = 0.40f;
-                    vaultPeakY = b.max.y + 0.20f;
-                    vaultTargetZ = b.max.z + 1.3f;
-                    currentSpeed = baseSpeed * 1.15f; // Crisp speed reward!
+                    forwardSpeed *= 1.20f;
+                    vaultPeakY = vaultObstacleTopY + 0.20f;
                     SetVaultRatingBanner("PERFECT VAULT! +SPEED", new Color(0.2f, 0.9f, 1.0f));
                     break;
 
                 case VaultQuality.Imperfect:
-                    // Missed the correct interval (too late / on collision)
-                    vaultDuration = 0.55f;
-                    vaultPeakY = b.max.y + 0.15f;
-                    vaultTargetZ = b.max.z + 0.85f;
-                    currentSpeed = baseSpeed * 0.70f; // Stumble slowdown penalty
+                    forwardSpeed *= 0.88f;
+                    vaultPeakY = vaultObstacleTopY + 0.16f;
                     isStumbling = true;
-                    stumbleTimer = 0.55f;
-                    SetVaultRatingBanner("IMPERFECT (MISSED TIMING)", new Color(1.0f, 0.35f, 0.35f));
+                    stumbleTimer = 0.40f;
+                    SetVaultRatingBanner("IMPERFECT VAULT", new Color(1.0f, 0.4f, 0.4f));
                     break;
 
                 default:
-                    vaultDuration = 0.42f;
-                    vaultPeakY = b.max.y + 0.25f;
-                    vaultTargetZ = b.max.z + 1.15f;
-                    currentSpeed = baseSpeed;
+                    forwardSpeed *= 1.08f;
+                    vaultPeakY = vaultObstacleTopY + 0.22f;
                     break;
             }
+
+            currentSpeed = forwardSpeed;
+            float totalDistZ = Mathf.Max(1.4f, vaultTargetZ - vaultStartPos.z);
+            vaultDuration = totalDistZ / forwardSpeed;
 
             if (animator != null)
             {
                 animator.SetBool(AnimIsVaulting, true);
                 if (hasAnimVaultType) animator.SetInteger(AnimVaultType, (int)quality);
+            }
+
+            Vector3D.Core.AudioManager.Instance?.PlayVaultSound((int)quality);
+            var followCam = UnityEngine.Object.FindFirstObjectByType<VectorFollowCamera>();
+            followCam?.AddTrauma(0.12f);
+        }
+
+        public void EndVaultDirect()
+        {
+            if (activeVaultCollider != null)
+            {
+                activeVaultCollider.isTrigger = false;
+                if (characterController != null)
+                {
+                    Physics.IgnoreCollision(characterController, activeVaultCollider, false);
+                }
+                activeVaultCollider = null;
+            }
+            if (characterController != null)
+            {
+                characterController.height = standingHeight;
+                characterController.center = standingCenter;
+            }
+        }
+
+        private float CalculateVaultElevation(float z)
+        {
+            float peakZ = Mathf.Max(vaultHurdleStartZ, vaultStartPos.z + 0.5f);
+            if (z < peakZ)
+            {
+                float approachDist = Mathf.Max(0.05f, peakZ - vaultStartPos.z);
+                float u = Mathf.Clamp01((z - vaultStartPos.z) / approachDist);
+                float s = Mathf.Sin(u * Mathf.PI * 0.5f);
+                return Mathf.Lerp(vaultStartPos.y, vaultPeakY, s);
+            }
+            else if (z <= vaultHurdleEndZ)
+            {
+                float span = Mathf.Max(0.1f, vaultHurdleEndZ - peakZ);
+                float v = Mathf.Clamp01((z - peakZ) / span);
+                float arc = Mathf.Sin(v * Mathf.PI) * 0.08f;
+                return vaultPeakY + arc;
+            }
+            else
+            {
+                float landDist = Mathf.Max(0.1f, vaultTargetZ - vaultHurdleEndZ);
+                float w = Mathf.Clamp01((z - vaultHurdleEndZ) / landDist);
+                float c = Mathf.Cos(w * Mathf.PI * 0.5f);
+                return vaultLandingY + (vaultPeakY - vaultLandingY) * c;
             }
         }
 
@@ -1073,6 +1193,10 @@ namespace VectorParkour
             currentSpeed = baseSpeed * 1.15f;
             lateralVelocity = 0f;
 
+            Vector3D.Core.AudioManager.Instance?.PlayWallClimbSound();
+            var followCam = UnityEngine.Object.FindFirstObjectByType<VectorFollowCamera>();
+            followCam?.AddTrauma(0.16f);
+
             // Determine target wall X
             Vector3 probeDir = toSide == 1 ? Vector3.right : -Vector3.right;
             Vector3 origin = transform.position + Vector3.up * 1.0f;
@@ -1227,6 +1351,12 @@ namespace VectorParkour
             // Frame-rate independent exponential smoothing
             float t = 1f - Mathf.Exp(-wallTiltSpeed * dt);
             visualRoot.localRotation = Quaternion.Slerp(visualRoot.localRotation, targetRot, t);
+
+            // Snap cleanly to default upright posture when settling to eliminate residual tilt
+            if (targetRot == defaultVisualLocalRotation && Quaternion.Angle(visualRoot.localRotation, defaultVisualLocalRotation) < 0.25f)
+            {
+                visualRoot.localRotation = defaultVisualLocalRotation;
+            }
         }
 
         #endregion
@@ -1236,6 +1366,10 @@ namespace VectorParkour
         private void UpdateStateMachine()
         {
             bool grounded = characterController.isGrounded;
+            if (grounded)
+            {
+                lastGroundedY = transform.position.y;
+            }
             float dt = Time.deltaTime;
 
             switch (currentState)
@@ -1277,8 +1411,9 @@ namespace VectorParkour
 
                 case MovementState.Vaulting:
                     vaultTimer += dt;
-                    if (vaultTimer >= vaultDuration)
+                    if (transform.position.z >= vaultTargetZ || vaultTimer >= vaultDuration * 1.25f)
                     {
+                        EndVaultDirect();
                         currentState = grounded ? MovementState.Running : MovementState.Falling;
                         verticalVelocity = -2.0f;
                         currentVaultQuality = VaultQuality.None;
@@ -1290,10 +1425,10 @@ namespace VectorParkour
                     verticalVelocity += gravity * dt;
                     verticalVelocity = Mathf.Max(verticalVelocity, maxFallSpeed);
 
-                    // Mid-air contextual vault if jump was buffered ahead of a vault block
-                    if (jumpBufferTimer > 0f && TryDetectVaultObstacle(out Collider airVaultCol))
+                    // Contextual vault conversion: if jumping towards a vault obstacle, seamlessly hurdle it
+                    if (TryDetectVaultObstacle(out Collider airVaultCol, out float distToObs) && distToObs < 3.2f)
                     {
-                        ExecuteVault(airVaultCol);
+                        ExecuteVault(airVaultCol, EvaluateVaultQuality(distToObs));
                         return;
                     }
 
@@ -1446,9 +1581,17 @@ namespace VectorParkour
                 case MovementState.Sliding:
                     if (!grounded)
                     {
-                        EndSlideDirect();
-                        currentState = MovementState.Falling;
-                        return;
+                        airborneTimer += dt;
+                        if (airborneTimer > 0.15f && HasHeadroom())
+                        {
+                            EndSlideDirect();
+                            currentState = MovementState.Falling;
+                            return;
+                        }
+                    }
+                    else
+                    {
+                        airborneTimer = 0f;
                     }
 
                     verticalVelocity = -2.0f;
@@ -1487,15 +1630,29 @@ namespace VectorParkour
             airborneTimer = 0f;
             verticalVelocity = jumpForce;
             currentState = MovementState.Jumping;
+
+            Vector3D.Core.AudioManager.Instance?.PlayJumpSound();
+            var followCam = UnityEngine.Object.FindFirstObjectByType<VectorFollowCamera>();
+            followCam?.AddTrauma(0.10f);
         }
 
         private void Land()
         {
+            float fallDist = Mathf.Max(0f, lastGroundedY - transform.position.y);
             airborneTimer = 0f;
             verticalVelocity = -2.0f;
             currentState = MovementState.Running;
             lastWallSide = 0;
             sameWallCooldownTimer = 0f;
+
+            if (visualRoot != null)
+            {
+                visualRoot.localRotation = Quaternion.Slerp(visualRoot.localRotation, defaultVisualLocalRotation, 0.4f);
+            }
+
+            Vector3D.Core.AudioManager.Instance?.PlayLandSound(Mathf.Clamp01(fallDist / 2.5f));
+            var followCam = UnityEngine.Object.FindFirstObjectByType<VectorFollowCamera>();
+            followCam?.AddTrauma(Mathf.Clamp(fallDist * 0.08f, 0.12f, 0.32f));
 
             if (jumpBufferTimer > 0f)
             {
@@ -1518,6 +1675,10 @@ namespace VectorParkour
 
             characterController.height = slidingHeight;
             characterController.center = slidingCenter;
+
+            Vector3D.Core.AudioManager.Instance?.PlaySlideSound();
+            var followCam = UnityEngine.Object.FindFirstObjectByType<VectorFollowCamera>();
+            followCam?.AddTrauma(0.08f);
         }
 
         private void EndSlideDirect()
@@ -1556,19 +1717,27 @@ namespace VectorParkour
             float dt = Time.deltaTime;
             if (dt <= 0f) return;
 
-            // 1. Deterministic Vault Interpolation
+            // 1. Obstacle-Anchored Deterministic Vault Trajectory
             if (currentState == MovementState.Vaulting)
             {
-                float t = Mathf.Clamp01(vaultTimer / vaultDuration);
-                float smoothT = Mathf.SmoothStep(0f, 1f, t);
+                float stepZ = currentSpeed * dt;
+                float nextZ = transform.position.z + stepZ;
+                float nextY = CalculateVaultElevation(nextZ);
+                float stepY = nextY - transform.position.y;
 
-                float newZ = Mathf.Lerp(vaultStartPos.z, vaultTargetZ, smoothT);
-                float arcY = Mathf.Sin(t * Mathf.PI) * (vaultPeakY - vaultStartPos.y);
-                float newY = vaultStartPos.y + arcY;
-                float newX = Mathf.SmoothDamp(transform.position.x, _trackCenterX, ref lateralVelocity, lateralSmoothTime);
+                float targetX = Mathf.SmoothDamp(transform.position.x, _trackCenterX, ref lateralVelocity, lateralSmoothTime);
+                float stepX = targetX - transform.position.x;
 
-                Vector3 targetPos = new Vector3(newX, newY, newZ);
-                characterController.Move(targetPos - transform.position);
+                Vector3 moveStep = new Vector3(stepX, stepY, stepZ);
+                characterController.Move(moveStep);
+
+                if (transform.position.z >= vaultTargetZ || vaultTimer >= vaultDuration * 1.25f)
+                {
+                    EndVaultDirect();
+                    currentState = characterController.isGrounded ? MovementState.Running : MovementState.Falling;
+                    verticalVelocity = -2.0f;
+                    currentVaultQuality = VaultQuality.None;
+                }
                 return;
             }
 
@@ -1669,7 +1838,9 @@ namespace VectorParkour
                     }
                 }
 
-                if (Mathf.Abs(other.transform.position.x - transform.position.x) < 5.0f)
+                // Authoritatively require the player's physical body to actually reach the finish gate threshold
+                float playerFrontZ = transform.position.z + (characterController != null ? characterController.radius : 0.35f);
+                if (playerFrontZ >= other.bounds.min.z - 0.2f && Mathf.Abs(other.transform.position.x - transform.position.x) < 5.0f)
                 {
                     ReachFinishLine();
                     return;
@@ -1724,11 +1895,19 @@ namespace VectorParkour
             }
         }
 
+        private void OnTriggerStay(Collider other)
+        {
+            if (other.CompareTag("Finish"))
+            {
+                OnTriggerEnter(other);
+            }
+        }
+
         private void OnControllerColliderHit(ControllerColliderHit hit)
         {
             if (hit.normal.z < -0.5f)
             {
-                if (hit.gameObject.CompareTag("Obstacle_Vault") && !IsJumping && !IsVaulting)
+                if (hit.gameObject.CompareTag("Obstacle_Vault") && !IsVaulting)
                 {
                     if (jumpBufferTimer > 0f)
                     {
@@ -1738,6 +1917,7 @@ namespace VectorParkour
 
                     if (Mathf.Abs(hit.transform.position.z - lastClearedObstacleZ) > 1.5f)
                     {
+                        lastClearedObstacleZ = hit.transform.position.z;
                         // Collided with obstacle -> Imperfect Jump!
                         ExecuteVault(hit.collider, VaultQuality.Imperfect);
                         TriggerStumble(stumbleDuration, hit.transform.position.z, true);
@@ -1747,6 +1927,7 @@ namespace VectorParkour
                 {
                     if (Mathf.Abs(hit.transform.position.z - lastClearedObstacleZ) > 1.5f)
                     {
+                        lastClearedObstacleZ = hit.transform.position.z;
                         TriggerStumble(stumbleDuration, hit.transform.position.z, false);
                     }
                 }
@@ -1760,6 +1941,10 @@ namespace VectorParkour
             lastStumbleZ = obstacleZ;
             isStumbling = true;
             stumbleTimer = duration;
+
+            Vector3D.Core.AudioManager.Instance?.PlayStumbleSound();
+            var followCam = UnityEngine.Object.FindFirstObjectByType<VectorFollowCamera>();
+            followCam?.AddTrauma(0.45f);
 
             if (currentState == MovementState.WallRunning)
             {
@@ -1811,6 +1996,8 @@ namespace VectorParkour
             hasCompletedLevel = true;
             Time.timeScale = 0f;
 
+            Vector3D.Core.AudioManager.Instance?.PlayVictorySound();
+
             if (GameManager.Instance != null)
             {
                 GameManager.Instance.TriggerGameOver(true);
@@ -1830,12 +2017,32 @@ namespace VectorParkour
                 {
                     RestartRun();
                 }
+                return;
+            }
+
+            if (!hasCompletedLevel && GameManager.Instance != null)
+            {
+                GameObject root = GameManager.Instance.GetLevelRoot(GameManager.Instance.CurrentLevelIndex);
+                if (root != null)
+                {
+                    Vector3D.Core.ParkourSector sector = root.GetComponent<Vector3D.Core.ParkourSector>();
+                    FinishLine gate = sector != null ? sector.FinishGate : root.GetComponentInChildren<FinishLine>(true);
+                    if (gate != null && gate.gameObject.activeInHierarchy)
+                    {
+                        if (transform.position.z >= gate.transform.position.z &&
+                            Mathf.Abs(transform.position.x - gate.transform.position.x) < 8.0f)
+                        {
+                            ReachFinishLine();
+                        }
+                    }
+                }
             }
         }
 
         public void TeleportToStart(Vector3 spawnPoint)
         {
             InitializeComponentsOnce();
+            EndVaultDirect();
 
             if (characterController != null)
             {
@@ -2021,6 +2228,46 @@ namespace VectorParkour
             if (isStumbling)
             {
                 GUI.Label(new Rect(Screen.width / 2f - 180, 80, 360, 40), "STUMBLED! HUNTER CLOSING IN!", stumbleStyle);
+
+                Color prevCol = GUI.color;
+                GUI.color = new Color(1f, 0.12f, 0.12f, 0.35f);
+                int borderThickness = 12;
+                GUI.DrawTexture(new Rect(0, 0, Screen.width, borderThickness), Texture2D.whiteTexture);
+                GUI.DrawTexture(new Rect(0, Screen.height - borderThickness, Screen.width, borderThickness), Texture2D.whiteTexture);
+                GUI.DrawTexture(new Rect(0, 0, borderThickness, Screen.height), Texture2D.whiteTexture);
+                GUI.DrawTexture(new Rect(Screen.width - borderThickness, 0, borderThickness, Screen.height), Texture2D.whiteTexture);
+                GUI.color = prevCol;
+            }
+
+            ChaserAI activeChaser = UnityEngine.Object.FindFirstObjectByType<ChaserAI>();
+            if (activeChaser != null)
+            {
+                float chaserDist = transform.position.z - activeChaser.transform.position.z;
+                if (chaserDist > 0f && chaserDist < 3.8f)
+                {
+                    float pulse = Mathf.Sin(Time.time * 8f) * 0.5f + 0.5f;
+                    float danger = 1f - (chaserDist / 3.8f);
+                    float edgeAlpha = danger * (0.18f + pulse * 0.28f);
+                    Color prevCol = GUI.color;
+                    GUI.color = new Color(1f, 0.08f, 0.08f, edgeAlpha);
+                    int borderThickness = (int)Mathf.Lerp(6f, 16f, danger);
+                    GUI.DrawTexture(new Rect(0, 0, Screen.width, borderThickness), Texture2D.whiteTexture);
+                    GUI.DrawTexture(new Rect(0, Screen.height - borderThickness, Screen.width, borderThickness), Texture2D.whiteTexture);
+                    GUI.DrawTexture(new Rect(0, 0, borderThickness, Screen.height), Texture2D.whiteTexture);
+                    GUI.DrawTexture(new Rect(Screen.width - borderThickness, 0, borderThickness, Screen.height), Texture2D.whiteTexture);
+                    GUI.color = prevCol;
+                }
+            }
+
+            if (isSprinting)
+            {
+                Color prevCol = GUI.color;
+                float streakAlpha = 0.20f + Mathf.PingPong(Time.time * 6f, 0.15f);
+                GUI.color = new Color(0.25f, 0.85f, 1f, streakAlpha);
+                int streakW = 5;
+                GUI.DrawTexture(new Rect(0, 0, streakW, Screen.height), Texture2D.whiteTexture);
+                GUI.DrawTexture(new Rect(Screen.width - streakW, 0, streakW, Screen.height), Texture2D.whiteTexture);
+                GUI.color = prevCol;
             }
         }
 

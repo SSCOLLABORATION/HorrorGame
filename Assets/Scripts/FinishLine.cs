@@ -39,8 +39,20 @@ namespace VectorParkour
                 return;
             }
 
+            Collider myCol = GetComponent<Collider>();
+            float playerFrontZ = player.transform.position.z + 0.35f;
+            if (myCol != null && playerFrontZ < myCol.bounds.min.z - 0.2f)
+            {
+                return;
+            }
+
             hasTriggered = true;
             player.ReachFinishLine();
+        }
+
+        public void OnTriggerStay(Collider other)
+        {
+            OnTriggerEnter(other);
         }
 
         public void ResetFinishLine()

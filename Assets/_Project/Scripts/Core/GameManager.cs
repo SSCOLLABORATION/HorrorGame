@@ -124,8 +124,7 @@ namespace Vector3D.Core
         {
             _currentLevelIndex = 1;
             EnsureLevelRoots();
-            UpdateLevelVisibility();
-            SetState(_initialState);
+            SelectLevel(_currentLevelIndex, startPlaying: (_initialState == GameState.Playing));
         }
 
         public void SetState(GameState newState)
@@ -153,7 +152,7 @@ namespace Vector3D.Core
         /// </summary>
         public void StartGame()
         {
-            SetState(GameState.Playing);
+            SelectLevel(_currentLevelIndex > 0 ? _currentLevelIndex : 1, startPlaying: true);
         }
 
         /// <summary>

@@ -48,8 +48,53 @@ namespace Vector3D.UI
 
         private bool _cameFromGameOver = false;
 
+        private void AutoWireReferencesIfMissing()
+        {
+            if (_startScreenPanel == null)
+            {
+                Transform t = transform.Find("StartScreenPanel");
+                if (t != null) _startScreenPanel = t.gameObject;
+            }
+            if (_endScreenPanel == null)
+            {
+                Transform t = transform.Find("EndScreenPanel");
+                if (t != null) _endScreenPanel = t.gameObject;
+            }
+            if (_levelSelectPanel == null)
+            {
+                Transform t = transform.Find("LevelSelectPanel");
+                if (t != null) _levelSelectPanel = t.gameObject;
+            }
+
+            if (_playButton == null) _playButton = transform.Find("StartScreenPanel/LeftMenuCard/PlayButton")?.GetComponent<Button>() ?? transform.Find("StartScreenPanel/PlayButton")?.GetComponent<Button>();
+            if (_levelSelectButton == null) _levelSelectButton = transform.Find("StartScreenPanel/LeftMenuCard/LevelSelectButton")?.GetComponent<Button>() ?? transform.Find("StartScreenPanel/LevelSelectButton")?.GetComponent<Button>();
+            if (_startQuitButton == null) _startQuitButton = transform.Find("StartScreenPanel/LeftMenuCard/QuitButton")?.GetComponent<Button>() ?? transform.Find("StartScreenPanel/QuitButton")?.GetComponent<Button>();
+
+            if (_level1Button == null) _level1Button = transform.Find("LevelSelectPanel/Level1Button")?.GetComponent<Button>();
+            if (_level2Button == null) _level2Button = transform.Find("LevelSelectPanel/Level2Button")?.GetComponent<Button>();
+            if (_level3Button == null) _level3Button = transform.Find("LevelSelectPanel/Level3Button")?.GetComponent<Button>();
+            if (_level4Button == null) _level4Button = transform.Find("LevelSelectPanel/Level4Button")?.GetComponent<Button>();
+            if (_levelSelectBackButton == null) _levelSelectBackButton = transform.Find("LevelSelectPanel/BackButton")?.GetComponent<Button>();
+
+            if (_nextLevelButton == null) _nextLevelButton = transform.Find("EndScreenPanel/ButtonsContainer/NextLevelButton")?.GetComponent<Button>() ?? transform.Find("EndScreenPanel/NextLevelButton")?.GetComponent<Button>();
+            if (_restartButton == null) _restartButton = transform.Find("EndScreenPanel/ButtonsContainer/RestartButton")?.GetComponent<Button>() ?? transform.Find("EndScreenPanel/RestartButton")?.GetComponent<Button>();
+            if (_endLevelSelectButton == null) _endLevelSelectButton = transform.Find("EndScreenPanel/ButtonsContainer/EndLevelSelectButton")?.GetComponent<Button>() ?? transform.Find("EndScreenPanel/EndLevelSelectButton")?.GetComponent<Button>();
+            if (_endQuitButton == null) _endQuitButton = transform.Find("EndScreenPanel/ButtonsContainer/QuitButton")?.GetComponent<Button>() ?? transform.Find("EndScreenPanel/QuitButton")?.GetComponent<Button>();
+
+            if (_statusHeaderText == null) _statusHeaderText = transform.Find("EndScreenPanel/StatusHeader")?.GetComponent<Text>();
+            if (_statusSubText == null) _statusSubText = transform.Find("EndScreenPanel/StatusSub")?.GetComponent<Text>();
+            if (_currentLevelLabel == null) _currentLevelLabel = transform.Find("StartScreenPanel/LeftMenuCard/CurrentLevelLabel")?.GetComponent<Text>();
+        }
+
+        private void OnValidate()
+        {
+            AutoWireReferencesIfMissing();
+        }
+
         private void Awake()
         {
+            AutoWireReferencesIfMissing();
+
             if (_playButton != null)
             {
                 _playButton.onClick.RemoveAllListeners();

@@ -40,9 +40,9 @@ namespace VectorParkour
         [Header("Occlusion & Side Transition")]
         [SerializeField] private float sideTransitionSpeed = 6.0f;
         [SerializeField] private float minSideDuration = 0.35f;
-        [SerializeField] private float sphereCastRadius = 0.35f;
-        [SerializeField] private float nearClipMargin = 0.30f;
-        [SerializeField] private float minCameraDistance = 1.6f;
+        [SerializeField] private float sphereCastRadius = 0.25f;
+        [SerializeField] private float nearClipMargin = 0.20f;
+        [SerializeField] private float minCameraDistance = 0.55f;
         [SerializeField] private LayerMask occlusionMask = ~0;
 
         [Header("Damping Parameters")]
@@ -56,6 +56,20 @@ namespace VectorParkour
         [SerializeField] private float threatFOV = 46.0f;
         [SerializeField] private float threatDistanceThreshold = 3.0f;
         [SerializeField] private float fovTransitionSpeed = 4.0f;
+
+        [Header("Camera Trauma & Juice")]
+        [SerializeField] private float traumaDecay = 1.6f;
+        [SerializeField] private float maxShakeOffset = 0.16f;
+        [SerializeField] private float maxShakeAngle = 1.8f;
+
+        private float currentTrauma = 0f;
+        private float traumaTime = 0f;
+
+        public void AddTrauma(float amount)
+        {
+            if (Time.timeScale <= 0f) return;
+            currentTrauma = Mathf.Clamp01(currentTrauma + amount);
+        }
 
         private Camera cam;
         private PlayerParkourController playerController;
@@ -118,8 +132,18 @@ namespace VectorParkour
             {
                 smoothTimeZ = 0.03f;
             }
+            if (minCameraDistance > 0.8f)
+            {
+                minCameraDistance = 0.55f;
+            }
+            if (nearClipMargin > 0.25f)
+            {
+                nearClipMargin = 0.20f;
+            }
             currentOffset = defaultOffset;
             currentEulerAngle = defaultEulerAngle;
+            currentTrauma = 0f;
+            traumaTime = 0f;
         }
 
         private void Start()
@@ -162,6 +186,8 @@ namespace VectorParkour
             currentSide = CameraSide.DefaultLeft;
             currentOffset = defaultOffset;
             currentEulerAngle = defaultEulerAngle;
+            currentTrauma = 0f;
+            traumaTime = 0f;
             timeSinceSideSwitch = 0f;
             betweenWallsTimer = 0f;
             outsideWallsTimer = 0f;
@@ -224,6 +250,18 @@ namespace VectorParkour
             return IsCandidateObstructed(defaultOffset);
         }
 
+        private bool IsAlternateViewObstructed()
+        {
+            if (target == null) return false;
+
+            if (playerController != null && playerController.IsWallRunning && playerController.WallSide == 1)
+            {
+                return true;
+            }
+
+            return IsCandidateObstructed(alternateOffset);
+        }
+
         public bool IsBetweenBothWalls()
         {
             if (playerController != null)
@@ -284,30 +322,44 @@ namespace VectorParkour
                 else
                 {
                     bool defaultBlocked = IsDefaultViewObstructed();
-                    if (defaultBlocked)
+                    bool altBlocked = IsAlternateViewObstructed();
+
+                    if (currentSide == CameraSide.AlternateRight)
                     {
-                        // Only switch to alternate side if alternate side is actually CLEAR!
-                        bool altBlocked = IsCandidateObstructed(alternateOffset);
-                        if (!altBlocked)
+                        if (altBlocked)
                         {
-                            desiredSide = CameraSide.AlternateRight;
+                            if (!defaultBlocked)
+                            {
+                                desiredSide = CameraSide.DefaultLeft;
+                            }
+                            else
+                            {
+                                desiredSide = CameraSide.OverheadTop;
+                            }
+                        }
+                        else if (!defaultBlocked && timeSinceSideSwitch >= minSideDuration)
+                        {
+                            desiredSide = CameraSide.DefaultLeft;
+                        }
+                    }
+                    else // DefaultLeft
+                    {
+                        if (defaultBlocked)
+                        {
+                            if (!altBlocked)
+                            {
+                                desiredSide = CameraSide.AlternateRight;
+                            }
+                            else
+                            {
+                                // Both sides are blocked by walls/corridor -> Elevate to OverheadTop view so player never disappears!
+                                desiredSide = CameraSide.OverheadTop;
+                            }
                         }
                         else
                         {
-                            // If both sides are blocked (e.g. narrow pillars), remain on default side and let collision pull-in handle it
                             desiredSide = CameraSide.DefaultLeft;
                         }
-                    }
-                    else if (currentSide == CameraSide.AlternateRight)
-                    {
-                        if (timeSinceSideSwitch >= minSideDuration)
-                        {
-                            desiredSide = CameraSide.DefaultLeft;
-                        }
-                    }
-                    else
-                    {
-                        desiredSide = CameraSide.DefaultLeft;
                     }
                 }
             }
@@ -406,6 +458,9 @@ namespace VectorParkour
                 {
                     float safeDist = Mathf.Max(minCameraDistance, nearestDist - nearClipMargin);
                     desiredCamPos = focusPoint + camDir * safeDist;
+                    // Slightly elevate camera when pulled in close to maintain clear sightline over obstacles
+                    float pullInRatio = Mathf.Clamp01(1f - (safeDist / desiredDistance));
+                    desiredCamPos.y += pullInRatio * 0.40f;
                 }
             }
 
@@ -414,8 +469,27 @@ namespace VectorParkour
             float posY = Mathf.SmoothDamp(transform.position.y, desiredCamPos.y, ref velocityY, smoothTimeY, Mathf.Infinity, dt);
             float posZ = Mathf.SmoothDamp(transform.position.z, desiredCamPos.z, ref velocityZ, smoothTimeZ, Mathf.Infinity, dt);
 
-            transform.position = new Vector3(posX, posY, posZ);
-            transform.rotation = Quaternion.Euler(currentEulerAngle);
+            Vector3 shakeOffset = Vector3.zero;
+            Vector3 shakeAngleOffset = Vector3.zero;
+            float shakeAmount = currentTrauma * currentTrauma;
+
+            if (shakeAmount > 0.0005f && Time.timeScale > 0f)
+            {
+                traumaTime += dt * 25f;
+                shakeOffset.x = (Mathf.PerlinNoise(traumaTime, 0.5f) * 2f - 1f) * maxShakeOffset * shakeAmount;
+                shakeOffset.y = (Mathf.PerlinNoise(0.5f, traumaTime) * 2f - 1f) * maxShakeOffset * shakeAmount;
+                shakeAngleOffset.z = (Mathf.PerlinNoise(traumaTime * 0.8f, 15f) * 2f - 1f) * maxShakeAngle * shakeAmount;
+                shakeAngleOffset.x = (Mathf.PerlinNoise(15f, traumaTime * 0.8f) * 2f - 1f) * (maxShakeAngle * 0.5f) * shakeAmount;
+
+                currentTrauma = Mathf.MoveTowards(currentTrauma, 0f, traumaDecay * dt);
+            }
+            else
+            {
+                currentTrauma = 0f;
+            }
+
+            transform.position = new Vector3(posX, posY, posZ) + shakeOffset;
+            transform.rotation = Quaternion.Euler(currentEulerAngle + shakeAngleOffset);
 
             UpdateDynamicFOV(dt);
         }
