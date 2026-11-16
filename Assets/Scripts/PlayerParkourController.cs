@@ -2,6 +2,7 @@ using System;
 using UnityEngine;
 using UnityEngine.InputSystem;
 using Vector3D.Core;
+using Vector3D.VFX;
 
 namespace VectorParkour
 {
@@ -510,6 +511,7 @@ namespace VectorParkour
                 {
                     isSprinting = false;
                     sprintCooldownTimer = sprintCooldown;
+                    ParkourVFXManager.Instance?.SetSprintVFX(false, null);
                 }
             }
 
@@ -595,6 +597,7 @@ namespace VectorParkour
                 {
                     isSprinting = false;
                     sprintTimer = 0f;
+                    ParkourVFXManager.Instance?.SetSprintVFX(false, null);
                     ActivateWallJumpMode();
                     return;
                 }
@@ -725,6 +728,7 @@ namespace VectorParkour
             {
                 isSprinting = true;
                 sprintTimer = sprintDuration;
+                ParkourVFXManager.Instance?.SetSprintVFX(true, transform);
             }
         }
 
@@ -903,6 +907,7 @@ namespace VectorParkour
             vaultHurdleEndZ = Mathf.Max(vaultObstacleBackZ + radius, vaultStartPos.z + 0.6f);
             vaultTargetZ = Mathf.Max(vaultHurdleEndZ + 1.25f, vaultStartPos.z + 1.4f);
             lastClearedObstacleZ = obstacle != null ? obstacle.transform.position.z : transform.position.z;
+            ParkourVFXManager.Instance?.PlayVaultVFX(new Vector3(transform.position.x, vaultObstacleTopY, vaultObstacleFrontZ), quality);
 
             // Completely eliminate collider snagging / backward hitching:
             // Temporarily set obstacle to trigger and ignore collision during vault
@@ -1058,6 +1063,7 @@ namespace VectorParkour
             verticalVelocity = Mathf.Clamp(verticalVelocity * 0.5f + 3.2f, 2.5f, 5.5f);
 
             lateralVelocity = 0f;
+            ParkourVFXManager.Instance?.StartWallRunVFX(transform, side, hit.point);
             airborneTimer = 0f;
             jumpBufferTimer = 0f;
             slideBufferTimer = 0f;
@@ -1134,6 +1140,9 @@ namespace VectorParkour
             float directionToCenter = Mathf.Sign(_trackCenterX - transform.position.x);
             if (directionToCenter == 0f) directionToCenter = (wallSide == -1) ? 1f : -1f;
             lateralVelocity = directionToCenter * 4.0f;
+
+            ParkourVFXManager.Instance?.StopWallRunVFX();
+            ParkourVFXManager.Instance?.PlayWallKickVFX(transform.position, wallSide == -1 ? Vector3.right : -Vector3.right);
 
             lastWallSide = wallSide;
             sameWallCooldownTimer = 0.4f;
@@ -1653,6 +1662,7 @@ namespace VectorParkour
             Vector3D.Core.AudioManager.Instance?.PlayLandSound(Mathf.Clamp01(fallDist / 2.5f));
             var followCam = UnityEngine.Object.FindFirstObjectByType<VectorFollowCamera>();
             followCam?.AddTrauma(Mathf.Clamp(fallDist * 0.08f, 0.12f, 0.32f));
+            ParkourVFXManager.Instance?.PlayLandingVFX(transform.position, fallDist, isPlayer: true);
 
             if (jumpBufferTimer > 0f)
             {
@@ -1679,12 +1689,14 @@ namespace VectorParkour
             Vector3D.Core.AudioManager.Instance?.PlaySlideSound();
             var followCam = UnityEngine.Object.FindFirstObjectByType<VectorFollowCamera>();
             followCam?.AddTrauma(0.08f);
+            ParkourVFXManager.Instance?.StartSlideVFX(transform);
         }
 
         private void EndSlideDirect()
         {
             characterController.height = standingHeight;
             characterController.center = standingCenter;
+            ParkourVFXManager.Instance?.StopSlideVFX();
         }
 
         public bool HasHeadroom()
@@ -1945,6 +1957,7 @@ namespace VectorParkour
             Vector3D.Core.AudioManager.Instance?.PlayStumbleSound();
             var followCam = UnityEngine.Object.FindFirstObjectByType<VectorFollowCamera>();
             followCam?.AddTrauma(0.45f);
+            ParkourVFXManager.Instance?.PlayStumbleVFX(transform.position + Vector3.forward * 0.4f + Vector3.up * 0.8f);
 
             if (currentState == MovementState.WallRunning)
             {
@@ -2068,6 +2081,7 @@ namespace VectorParkour
             currentState = MovementState.Running;
             isSprinting = false;
             isStumbling = false;
+            ParkourVFXManager.Instance?.ResetAll();
             hasCompletedLevel = false;
             vaultTimer = 0f;
             currentVaultQuality = VaultQuality.None;

@@ -3,6 +3,7 @@ using UnityEngine;
 using UnityEngine.InputSystem;
 #endif
 using Vector3D.Core;
+using Vector3D.VFX;
 
 namespace VectorParkour
 {
@@ -25,7 +26,9 @@ namespace VectorParkour
 
         [Header("Obstacle Autonav")]
         [SerializeField] private float detectionRange = 2.6f;
+#pragma warning disable 0414
         [SerializeField] private float jumpForce = 9.2f;
+#pragma warning restore 0414
         [SerializeField] private float gravity = -24f;
         [SerializeField] private float vaultDuration = 0.35f;
         [SerializeField] private float slideDuration = 0.65f;
@@ -345,6 +348,7 @@ namespace VectorParkour
                     isAIJumping = false;
                     verticalVelocity = -1.2f;
                     airborneTimer = 0f;
+                    ParkourVFXManager.Instance?.PlayLandingVFX(transform.position, 1.8f, isPlayer: false);
                     // Check for obstacles immediately upon landing (no 0.4s lockout!)
                     DetectAndHandleObstaclesAhead();
                 }
@@ -523,6 +527,7 @@ namespace VectorParkour
             vaultPeakY = obstacleTop + 0.35f;
             vaultTargetZ = obstacle.bounds.max.z + 1.3f;
             verticalVelocity = 0f;
+            ParkourVFXManager.Instance?.PlayVaultVFX(new Vector3(transform.position.x, obstacleTop, obstacle.bounds.min.z), VaultQuality.Good);
         }
 
         private void StartAISlide()
